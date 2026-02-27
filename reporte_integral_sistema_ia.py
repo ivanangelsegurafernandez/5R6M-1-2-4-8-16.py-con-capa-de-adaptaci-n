@@ -22,6 +22,9 @@ OUT_MD = ROOT / 'reporte_integral_sistema_ia.md'
 MIN_SIGNALS_FOR_BOT_GAP = 5
 EWMA_ALPHA_DEFAULT = 0.25
 CALIB_BINS = [(0.50, 0.60), (0.60, 0.70), (0.70, 0.80), (0.80, 0.90), (0.90, 1.01)]
+EWMA_MIN_SIGNALS_MATURE = 8
+THRESHOLD_HINT_MIN_CLOSED = 20
+THRESHOLD_HINT_MIN_BIN_90 = 8
 
 
 def _safe_float(v: Any) -> float | None:
@@ -114,22 +117,39 @@ def _bot_prob_from_signals(closed: list[dict[str, Any]], last_n: int = 40) -> di
     return out
 
 
+def _wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float | None, float | None]:
+    if n <= 0:
+        return None, None
+    phat = successes / n
+    den = 1.0 + (z * z) / n
+    center = (phat + (z * z) / (2.0 * n)) / den
+    margin = (z / den) * ((phat * (1.0 - phat) / n + (z * z) / (4.0 * n * n)) ** 0.5)
+    lo = max(0.0, center - margin)
+    hi = min(1.0, center + margin)
+    return lo, hi
+
+
 def _calibration_by_bins(closed: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for lo, hi in CALIB_BINS:
         bucket = [r for r in closed if lo <= float(r['prob']) < hi]
         n = len(bucket)
         if n == 0:
-            rows.append({'range': f'{int(lo*100)}-{int((hi if hi < 1.0 else 1.0)*100)}', 'n': 0, 'pred_mean': None, 'win_rate': None, 'gap_pp': None})
+            rows.append({'range': f'{int(lo*100)}-{int((hi if hi < 1.0 else 1.0)*100)}', 'n': 0, 'hits': 0, 'pred_mean': None, 'win_rate': None, 'gap_pp': None, 'wr_ci_low': None, 'wr_ci_high': None})
             continue
         pred_mean = sum(float(r['prob']) for r in bucket) / n
-        win_rate = sum(int(r['y']) for r in bucket) / n
+        hits = sum(int(r['y']) for r in bucket)
+        win_rate = hits / n
+        ci_low, ci_high = _wilson_interval(hits, n)
         rows.append({
             'range': f'{int(lo*100)}-{int((hi if hi < 1.0 else 1.0)*100)}',
             'n': n,
+            'hits': hits,
             'pred_mean': pred_mean,
             'win_rate': win_rate,
             'gap_pp': pred_mean - win_rate,
+            'wr_ci_low': ci_low,
+            'wr_ci_high': ci_high,
         })
     return rows
 
@@ -160,9 +180,18 @@ def _ewma_bot_health(closed: list[dict[str, Any]], alpha: float = EWMA_ALPHA_DEF
 
         if acc_ewma is None or penalty_ewma is None:
             continue
+        hits = sum(int(r['y']) for r in rows)
+        n = len(rows)
+        wr_raw = (hits / n) if n > 0 else None
+        wr_ci_low, wr_ci_high = _wilson_interval(hits, n)
         health = max(0.0, min(1.0, acc_ewma - (0.35 * penalty_ewma)))
         out[bot] = {
-            'n': len(rows),
+            'n': n,
+            'hits': hits,
+            'wr_raw': wr_raw,
+            'wr_ci_low': wr_ci_low,
+            'wr_ci_high': wr_ci_high,
+            'mature_sample': bool(n >= int(EWMA_MIN_SIGNALS_MATURE)),
             'ewma_hit': acc_ewma,
             'ewma_false_high_penalty': penalty_ewma,
             'false_high_count': false_high,
@@ -172,12 +201,14 @@ def _ewma_bot_health(closed: list[dict[str, Any]], alpha: float = EWMA_ALPHA_DEF
     return out
 
 
-def _adaptive_threshold_hint(calibration_bins: list[dict[str, Any]], ewma_health: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _adaptive_threshold_hint(calibration_bins: list[dict[str, Any]], ewma_health: dict[str, dict[str, Any]], closed_n: int) -> dict[str, Any]:
     base = 0.85
     over = 0.0
+    n90 = 0
     for b in calibration_bins:
         if b.get('range') == '90-100' and isinstance(b.get('gap_pp'), (int, float)):
             over = float(b['gap_pp'])
+            n90 = int(b.get('n', 0) or 0)
             break
 
     global_health = None
@@ -186,6 +217,11 @@ def _adaptive_threshold_hint(calibration_bins: list[dict[str, Any]], ewma_health
 
     dynamic = base
     reason = []
+    advisory_only = False
+    confidence = 'low'
+    if int(closed_n) < int(THRESHOLD_HINT_MIN_CLOSED) or int(n90) < int(THRESHOLD_HINT_MIN_BIN_90):
+        advisory_only = True
+        reason.append('muestra_insuficiente_para_automatizar')
     if over > 0.15:
         dynamic += 0.04
         reason.append('sobreconfianza_alta_90_100')
@@ -201,10 +237,19 @@ def _adaptive_threshold_hint(calibration_bins: list[dict[str, Any]], ewma_health
             dynamic -= 0.02
             reason.append('salud_bots_fuerte')
 
+    if not advisory_only:
+        confidence = 'medium' if int(closed_n) < 80 else 'high'
+
     return {
         'base_threshold': base,
         'dynamic_threshold': max(0.75, min(0.93, dynamic)),
         'global_health_score': global_health,
+        'advisory_only': advisory_only,
+        'confidence': confidence,
+        'min_closed_required': int(THRESHOLD_HINT_MIN_CLOSED),
+        'min_n90_required': int(THRESHOLD_HINT_MIN_BIN_90),
+        'closed_signals': int(closed_n),
+        'bin_90_100_n': int(n90),
         'reasons': reason,
     }
 
@@ -286,7 +331,7 @@ def build_report(runtime_log: Path | None) -> dict[str, Any]:
     p85 = _precision_at(closed, 0.85)
     calibration_bins = _calibration_by_bins(closed)
     ewma_health = _ewma_bot_health(closed)
-    adaptive_hint = _adaptive_threshold_hint(calibration_bins, ewma_health)
+    adaptive_hint = _adaptive_threshold_hint(calibration_bins, ewma_health, len(closed))
 
     by_bot_probs = _bot_prob_from_signals(closed, last_n=40)
 
@@ -400,24 +445,28 @@ def render_md(rep: dict[str, Any]) -> str:
         )
     lines.append('')
     lines.append('## 3) Calibración por rangos de probabilidad')
-    lines.append('| Rango Prob IA | n | Prob media | Winrate real | Gap (Prob-Winrate) |')
-    lines.append('|---|---:|---:|---:|---:|')
+    lines.append('| Rango Prob IA | n | Prob media | Winrate real | IC95% winrate | Gap (Prob-Winrate) |')
+    lines.append('|---|---:|---:|---:|---:|---:|')
     for b in cal.get('by_probability_bin', []):
-        lines.append(f"| {b.get('range')}% | {int(b.get('n', 0) or 0)} | {pct(b.get('pred_mean'))} | {pct(b.get('win_rate'))} | {pct(b.get('gap_pp'))} |")
+        ci = f"[{pct(b.get('wr_ci_low'))}, {pct(b.get('wr_ci_high'))}]" if isinstance(b.get('wr_ci_low'), (int, float)) else 'N/A'
+        lines.append(f"| {b.get('range')}% | {int(b.get('n', 0) or 0)} | {pct(b.get('pred_mean'))} | {pct(b.get('win_rate'))} | {ci} | {pct(b.get('gap_pp'))} |")
     lines.append('')
     lines.append('## 4) Capa adaptativa sugerida (EWMA + umbral dinámico)')
     hint = adaptive.get('threshold_hint', {})
     lines.append(f"- Umbral base: **{pct(hint.get('base_threshold'))}**")
     lines.append(f"- Umbral dinámico sugerido: **{pct(hint.get('dynamic_threshold'))}**")
     lines.append(f"- Salud global EWMA bots: **{pct(hint.get('global_health_score'))}**")
+    lines.append(f"- Modo: **{'solo sugerencia (no automatizar)' if hint.get('advisory_only') else 'apto para piloto controlado'}** | confianza: **{hint.get('confidence', 'low')}**")
+    lines.append(f"- Cobertura mínima para automatizar: closed>={int(hint.get('min_closed_required', THRESHOLD_HINT_MIN_CLOSED))} y n(90-100)>={int(hint.get('min_n90_required', THRESHOLD_HINT_MIN_BIN_90))}; actual: closed={int(hint.get('closed_signals', 0) or 0)}, n90={int(hint.get('bin_90_100_n', 0) or 0)}")
     rs = hint.get('reasons') or []
     lines.append(f"- Razones: {', '.join(rs) if rs else 'sin ajustes relevantes'}")
     lines.append('')
-    lines.append('| Bot | n señales | EWMA acierto | EWMA penalización falsas altas | Salud bot |')
-    lines.append('|---|---:|---:|---:|---:|')
+    lines.append('| Bot | n señales | Muestra madura | WR crudo | IC95% WR | EWMA acierto | EWMA penalización falsas altas | Salud bot |')
+    lines.append('|---|---:|---|---:|---:|---:|---:|---:|')
     for bot, d in sorted((adaptive.get('ewma_bot_health') or {}).items()):
+        ci = f"[{pct(d.get('wr_ci_low'))}, {pct(d.get('wr_ci_high'))}]" if isinstance(d.get('wr_ci_low'), (int, float)) else 'N/A'
         lines.append(
-            f"| {bot} | {int(d.get('n', 0) or 0)} | {pct(d.get('ewma_hit'))} | {pct(d.get('ewma_false_high_penalty'))} | {pct(d.get('health_score'))} |"
+            f"| {bot} | {int(d.get('n', 0) or 0)} | {'SI' if d.get('mature_sample') else 'NO'} | {pct(d.get('wr_raw'))} | {ci} | {pct(d.get('ewma_hit'))} | {pct(d.get('ewma_false_high_penalty'))} | {pct(d.get('health_score'))} |"
         )
     lines.append('')
     lines.append('## 5) Salud de ejecución (auth/ws/timeout)')

@@ -1,6 +1,6 @@
 # Reporte Integral de Salud IA
 
-Generado UTC: `2026-02-27T23:27:37.889968+00:00`
+Generado UTC: `2026-02-27T23:38:15.314590+00:00`
 
 ## 1) Calibración real de probabilidades
 - Señales cerradas: **12**
@@ -19,27 +19,29 @@ Generado UTC: `2026-02-27T23:27:37.889968+00:00`
 | fulll50 | 55.0% | 4 | 75.0% | 97.5% | N/A | N/A | BAJA(<5) |
 
 ## 3) Calibración por rangos de probabilidad
-| Rango Prob IA | n | Prob media | Winrate real | Gap (Prob-Winrate) |
-|---|---:|---:|---:|---:|
-| 50-60% | 0 | N/A | N/A | N/A |
-| 60-70% | 0 | N/A | N/A | N/A |
-| 70-80% | 0 | N/A | N/A | N/A |
-| 80-90% | 1 | 88.0% | 100.0% | -12.0% |
-| 90-100% | 11 | 97.3% | 54.5% | 42.8% |
+| Rango Prob IA | n | Prob media | Winrate real | IC95% winrate | Gap (Prob-Winrate) |
+|---|---:|---:|---:|---:|---:|
+| 50-60% | 0 | N/A | N/A | N/A | N/A |
+| 60-70% | 0 | N/A | N/A | N/A | N/A |
+| 70-80% | 0 | N/A | N/A | N/A | N/A |
+| 80-90% | 1 | 88.0% | 100.0% | [20.7%, 100.0%] | -12.0% |
+| 90-100% | 11 | 97.3% | 54.5% | [28.0%, 78.7%] | 42.8% |
 
 ## 4) Capa adaptativa sugerida (EWMA + umbral dinámico)
 - Umbral base: **85.0%**
 - Umbral dinámico sugerido: **89.0%**
 - Salud global EWMA bots: **53.0%**
-- Razones: sobreconfianza_alta_90_100
+- Modo: **solo sugerencia (no automatizar)** | confianza: **low**
+- Cobertura mínima para automatizar: closed>=20 y n(90-100)>=8; actual: closed=12, n90=11
+- Razones: muestra_insuficiente_para_automatizar, sobreconfianza_alta_90_100
 
-| Bot | n señales | EWMA acierto | EWMA penalización falsas altas | Salud bot |
-|---|---:|---:|---:|---:|
-| fulll45 | 3 | 75.0% | 25.0% | 66.2% |
-| fulll46 | 2 | 75.0% | 25.0% | 66.2% |
-| fulll47 | 2 | 75.0% | 25.0% | 66.2% |
-| fulll48 | 1 | 0.0% | 100.0% | 0.0% |
-| fulll50 | 4 | 75.0% | 25.0% | 66.2% |
+| Bot | n señales | Muestra madura | WR crudo | IC95% WR | EWMA acierto | EWMA penalización falsas altas | Salud bot |
+|---|---:|---|---:|---:|---:|---:|---:|
+| fulll45 | 3 | NO | 66.7% | [20.8%, 93.9%] | 75.0% | 25.0% | 66.2% |
+| fulll46 | 2 | NO | 50.0% | [9.5%, 90.5%] | 75.0% | 25.0% | 66.2% |
+| fulll47 | 2 | NO | 50.0% | [9.5%, 90.5%] | 75.0% | 25.0% | 66.2% |
+| fulll48 | 1 | NO | 0.0% | [0.0%, 79.3%] | 0.0% | 100.0% | 0.0% |
+| fulll50 | 4 | NO | 75.0% | [30.1%, 95.4%] | 75.0% | 25.0% | 66.2% |
 
 ## 5) Salud de ejecución (auth/ws/timeout)
 - No auditado en este run (falta `--runtime-log`).
