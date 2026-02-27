@@ -1,0 +1,105 @@
+{
+  "trained_at": "2026-02-27 14:28:25",
+  "rows_total": 1359,
+  "rows_train": 883,
+  "rows_calib": 204,
+  "rows_test": 272,
+  "pos": 648,
+  "neg": 711,
+  "auc": 0.4904990842490842,
+  "f1": 0.40963855421686746,
+  "brier": 0.2627430909987326,
+  "cv_auc": 0.48552324516501094,
+  "threshold": 0.5,
+  "reliable": false,
+  "reliable_candidate": false,
+  "canary_mode": false,
+  "canary_started_at": null,
+  "canary_target_closed": 0,
+  "refresh_policy": "champion_direct",
+  "calibration": "isotonic",
+  "calib_precision_at_thr": 0.5655737704918032,
+  "calib_n_at_thr": 122,
+  "test_precision_at_thr": 0.35172413793103446,
+  "test_n_at_thr": 145,
+  "feature_names": [
+    "racha_actual",
+    "rsi_14"
+  ],
+  "label_col": "result_bin",
+  "feature_health": {
+    "rsi_9": {
+      "nunique": 1136,
+      "dominance": 0.008830022075055188,
+      "status": "OK"
+    },
+    "rsi_14": {
+      "nunique": 1105,
+      "dominance": 0.0029433406916850625,
+      "status": "OK"
+    },
+    "sma_5": {
+      "nunique": 1304,
+      "dominance": 0.002207505518763797,
+      "status": "OK"
+    },
+    "sma_spread": {
+      "nunique": 1,
+      "dominance": 1.0,
+      "status": "ROTA"
+    },
+    "cruce_sma": {
+      "nunique": 1321,
+      "dominance": 0.002207505518763797,
+      "status": "OK"
+    },
+    "breakout": {
+      "nunique": 1307,
+      "dominance": 0.002207505518763797,
+      "status": "OK"
+    },
+    "rsi_reversion": {
+      "nunique": 1158,
+      "dominance": 0.009565857247976454,
+      "status": "OK"
+    },
+    "racha_actual": {
+      "nunique": 19,
+      "dominance": 0.23914643119941134,
+      "status": "OK"
+    },
+    "payout": {
+      "nunique": 10,
+      "dominance": 0.5614422369389257,
+      "status": "OK"
+    },
+    "puntaje_estrategia": {
+      "nunique": 1357,
+      "dominance": 0.0014716703458425313,
+      "status": "OK"
+    },
+    "volatilidad": {
+      "nunique": 1307,
+      "dominance": 0.002207505518763797,
+      "status": "OK"
+    },
+    "es_rebote": {
+      "nunique": 1248,
+      "dominance": 0.005886681383370125,
+      "status": "OK"
+    },
+    "hora_bucket": {
+      "nunique": 24,
+      "dominance": 0.04415011037527594,
+      "status": "OK"
+    }
+  },
+  "dropped_features": [
+    {
+      "feature": "sma_spread",
+      "reason": "ROTA:nunique=1"
+    }
+  ],
+  "n_samples": 1359,
+  "n": 1359
+}
