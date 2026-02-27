@@ -20,6 +20,8 @@ BOT_FILES = [ROOT / f'registro_enriquecido_fulll{n}.csv' for n in (45, 46, 47, 4
 OUT_JSON = ROOT / 'reporte_integral_sistema_ia.json'
 OUT_MD = ROOT / 'reporte_integral_sistema_ia.md'
 MIN_SIGNALS_FOR_BOT_GAP = 5
+EWMA_ALPHA_DEFAULT = 0.25
+CALIB_BINS = [(0.50, 0.60), (0.60, 0.70), (0.70, 0.80), (0.80, 0.90), (0.90, 1.01)]
 
 
 def _safe_float(v: Any) -> float | None:
@@ -112,6 +114,101 @@ def _bot_prob_from_signals(closed: list[dict[str, Any]], last_n: int = 40) -> di
     return out
 
 
+def _calibration_by_bins(closed: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for lo, hi in CALIB_BINS:
+        bucket = [r for r in closed if lo <= float(r['prob']) < hi]
+        n = len(bucket)
+        if n == 0:
+            rows.append({'range': f'{int(lo*100)}-{int((hi if hi < 1.0 else 1.0)*100)}', 'n': 0, 'pred_mean': None, 'win_rate': None, 'gap_pp': None})
+            continue
+        pred_mean = sum(float(r['prob']) for r in bucket) / n
+        win_rate = sum(int(r['y']) for r in bucket) / n
+        rows.append({
+            'range': f'{int(lo*100)}-{int((hi if hi < 1.0 else 1.0)*100)}',
+            'n': n,
+            'pred_mean': pred_mean,
+            'win_rate': win_rate,
+            'gap_pp': pred_mean - win_rate,
+        })
+    return rows
+
+
+def _ewma_bot_health(closed: list[dict[str, Any]], alpha: float = EWMA_ALPHA_DEFAULT) -> dict[str, dict[str, Any]]:
+    by_bot: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in closed:
+        by_bot[str(r.get('bot', '')).strip()].append(r)
+
+    out: dict[str, dict[str, Any]] = {}
+    for bot, rows in by_bot.items():
+        acc_ewma: float | None = None
+        penalty_ewma: float | None = None
+        false_high = 0
+        for r in rows:
+            y = int(r['y'])
+            p = float(r['prob'])
+            hit = 1.0 if y == 1 else 0.0
+            fp_high = 1.0 if (p >= 0.85 and y == 0) else 0.0
+            if acc_ewma is None:
+                acc_ewma = hit
+                penalty_ewma = fp_high
+            else:
+                acc_ewma = (alpha * hit) + ((1.0 - alpha) * acc_ewma)
+                penalty_ewma = (alpha * fp_high) + ((1.0 - alpha) * float(penalty_ewma))
+            if fp_high > 0:
+                false_high += 1
+
+        if acc_ewma is None or penalty_ewma is None:
+            continue
+        health = max(0.0, min(1.0, acc_ewma - (0.35 * penalty_ewma)))
+        out[bot] = {
+            'n': len(rows),
+            'ewma_hit': acc_ewma,
+            'ewma_false_high_penalty': penalty_ewma,
+            'false_high_count': false_high,
+            'health_score': health,
+            'alpha': alpha,
+        }
+    return out
+
+
+def _adaptive_threshold_hint(calibration_bins: list[dict[str, Any]], ewma_health: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    base = 0.85
+    over = 0.0
+    for b in calibration_bins:
+        if b.get('range') == '90-100' and isinstance(b.get('gap_pp'), (int, float)):
+            over = float(b['gap_pp'])
+            break
+
+    global_health = None
+    if ewma_health:
+        global_health = sum(float(v['health_score']) for v in ewma_health.values()) / len(ewma_health)
+
+    dynamic = base
+    reason = []
+    if over > 0.15:
+        dynamic += 0.04
+        reason.append('sobreconfianza_alta_90_100')
+    elif over > 0.08:
+        dynamic += 0.02
+        reason.append('sobreconfianza_media_90_100')
+
+    if isinstance(global_health, (int, float)):
+        if global_health < 0.45:
+            dynamic += 0.03
+            reason.append('salud_bots_baja')
+        elif global_health > 0.62:
+            dynamic -= 0.02
+            reason.append('salud_bots_fuerte')
+
+    return {
+        'base_threshold': base,
+        'dynamic_threshold': max(0.75, min(0.93, dynamic)),
+        'global_health_score': global_health,
+        'reasons': reason,
+    }
+
+
 def _parse_runtime_log(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {'exists': False, 'path': str(path), 'errors': {}, 'why_no_counts': {}}
@@ -187,6 +284,9 @@ def build_report(runtime_log: Path | None) -> dict[str, Any]:
 
     p70 = _precision_at(closed, 0.70)
     p85 = _precision_at(closed, 0.85)
+    calibration_bins = _calibration_by_bins(closed)
+    ewma_health = _ewma_bot_health(closed)
+    adaptive_hint = _adaptive_threshold_hint(calibration_bins, ewma_health)
 
     by_bot_probs = _bot_prob_from_signals(closed, last_n=40)
 
@@ -244,6 +344,11 @@ def build_report(runtime_log: Path | None) -> dict[str, Any]:
             'closed_signals': len(closed),
             'precision_at_70': p70,
             'precision_at_85': p85,
+            'by_probability_bin': calibration_bins,
+        },
+        'adaptive_layer': {
+            'ewma_bot_health': ewma_health,
+            'threshold_hint': adaptive_hint,
         },
         'diagnostic_snapshot': {
             'diag_checklist': diag.get('checklist', []),
@@ -268,6 +373,7 @@ def render_md(rep: dict[str, Any]) -> str:
     p70 = cal['precision_at_70']
     p85 = cal['precision_at_85']
     rd = rep['readiness_recommendation']
+    adaptive = rep.get('adaptive_layer', {})
 
     def pct(v: Any) -> str:
         return f"{float(v)*100:.1f}%" if isinstance(v, (int, float)) else "N/A"
@@ -293,7 +399,28 @@ def render_md(rep: dict[str, Any]) -> str:
             f"| {bot} | {pct(d.get('wr_last_n'))} | {int(d.get('signals_n', 0) or 0)} | {pct(d.get('hit_last_n'))} | {pct(d.get('prob_mean_last_n'))} | {pct(d.get('prob_vs_hit_gap_last_n'))} | {pct(d.get('prob_vs_wr_gap_last_n'))} | {sample_txt} |"
         )
     lines.append('')
-    lines.append('## 3) Salud de ejecución (auth/ws/timeout)')
+    lines.append('## 3) Calibración por rangos de probabilidad')
+    lines.append('| Rango Prob IA | n | Prob media | Winrate real | Gap (Prob-Winrate) |')
+    lines.append('|---|---:|---:|---:|---:|')
+    for b in cal.get('by_probability_bin', []):
+        lines.append(f"| {b.get('range')}% | {int(b.get('n', 0) or 0)} | {pct(b.get('pred_mean'))} | {pct(b.get('win_rate'))} | {pct(b.get('gap_pp'))} |")
+    lines.append('')
+    lines.append('## 4) Capa adaptativa sugerida (EWMA + umbral dinámico)')
+    hint = adaptive.get('threshold_hint', {})
+    lines.append(f"- Umbral base: **{pct(hint.get('base_threshold'))}**")
+    lines.append(f"- Umbral dinámico sugerido: **{pct(hint.get('dynamic_threshold'))}**")
+    lines.append(f"- Salud global EWMA bots: **{pct(hint.get('global_health_score'))}**")
+    rs = hint.get('reasons') or []
+    lines.append(f"- Razones: {', '.join(rs) if rs else 'sin ajustes relevantes'}")
+    lines.append('')
+    lines.append('| Bot | n señales | EWMA acierto | EWMA penalización falsas altas | Salud bot |')
+    lines.append('|---|---:|---:|---:|---:|')
+    for bot, d in sorted((adaptive.get('ewma_bot_health') or {}).items()):
+        lines.append(
+            f"| {bot} | {int(d.get('n', 0) or 0)} | {pct(d.get('ewma_hit'))} | {pct(d.get('ewma_false_high_penalty'))} | {pct(d.get('health_score'))} |"
+        )
+    lines.append('')
+    lines.append('## 5) Salud de ejecución (auth/ws/timeout)')
     rh = rep['runtime_health']
     if not rh.get('exists'):
         lines.append('- No auditado en este run (falta `--runtime-log`).')
@@ -306,7 +433,7 @@ def render_md(rep: dict[str, Any]) -> str:
             top = sorted(wh.items(), key=lambda x: x[1], reverse=True)[:8]
             lines.append('- WHY-NO más frecuentes: ' + ', '.join([f"{k}:{v}" for k, v in top]))
     lines.append('')
-    lines.append('## 4) Recomendación de cuándo correr este programa')
+    lines.append('## 6) Recomendación de cuándo correr este programa')
     lines.append('- **Recomendado siempre**: al iniciar sesión y luego cada 30-60 min.')
     lines.append('- **Corte de calidad fuerte**: después de cada bloque de +20 cierres nuevos.')
     lines.append('- **Punto mínimo para decisiones estructurales**:')
@@ -314,7 +441,7 @@ def render_md(rep: dict[str, Any]) -> str:
         lines.append(f"  - {'✅' if ok else '❌'} {k}")
     lines.append(f"- Ready for full diagnosis: **{rd['ready_for_full_diagnosis']}**")
     lines.append('')
-    lines.append('## 5) Qué falta corregir si no está “bien”')
+    lines.append('## 7) Qué falta corregir si no está “bien”')
     lines.append('- Nota: `Gap Prob-Hit señales` usa SOLO señales cerradas en `ia_signals_log.csv` y puede diferir de `WR last40 (csv)` del bot.')
     lines.append(f'- Gaps por bot se publican solo si `n señales IA >= {MIN_SIGNALS_FOR_BOT_GAP}` para evitar conclusiones con muestra mínima.')
     lines.append('- Si `precision@85` baja o n es pequeño: recalibrar/proteger compuerta.')
