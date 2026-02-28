@@ -174,6 +174,9 @@ HUD_VISIBLE = True       # Para ocultarlo con tecla
 IA_OBJETIVO_REAL_THR = 0.70   # objetivo de calidad REAL (meta: 70% aprox)
 IA_ACTIVACION_REAL_THR = 0.85 # mínimo operativo para activar señal REAL
 IA_ACTIVACION_REAL_THR_POST_N15 = 0.75  # al cumplir n mínimo por bot, el umbral operativo baja solo hasta 75%
+# En modo unreliable (reliable=false), permitir piso post-n15 más realista para no congelar entradas.
+IA_ACTIVACION_REAL_THR_POST_N15_UNREL = 0.60
+IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES = 300
 IA_ACTIVACION_REAL_MIN_N_POR_BOT = 15   # condición: todos los bots deben tener al menos n=15
 
 # --- Oráculo visual ---
@@ -9530,9 +9533,18 @@ def mostrar_panel():
             try:
                 bb = dyn_gate.get("best_bot") if isinstance(dyn_gate, dict) else None
                 if isinstance(bb, str) and bb in estado_bots:
-                    pr = estado_bots.get(bb, {}).get("ia_prob_raw_model", None)
+                    stbb = estado_bots.get(bb, {})
+                    pr = stbb.get("ia_prob_raw_model", None)
                     if isinstance(pr, (int, float)) and np.isfinite(float(pr)):
                         p_raw_best = float(pr)
+                    else:
+                        pc = stbb.get("ia_prob_cal_model", None)
+                        if isinstance(pc, (int, float)) and np.isfinite(float(pc)):
+                            p_raw_best = float(pc)
+                        else:
+                            pf = stbb.get("prob_ia", None)
+                            if isinstance(pf, (int, float)) and np.isfinite(float(pf)):
+                                p_raw_best = float(pf)
             except Exception:
                 p_raw_best = None
             p_raw_txt = f"{p_raw_best*100:.1f}%" if isinstance(p_raw_best, (int, float)) else "--"
@@ -10989,10 +11001,18 @@ def _umbral_real_operativo_actual() -> float:
     """
     Umbral REAL dinámico:
     - Base 85%
-    - Baja a 75% cuando TODOS los bots tienen n>=15
+    - Post-n15: 75%
+    - Si el modelo sigue unreliable con muestra suficiente, usar piso post-n15 más realista
+      para evitar bloqueo permanente por compuerta alta.
     """
     try:
         if _todos_bots_con_n_minimo_real():
+            meta = _ORACLE_CACHE.get("meta") or leer_model_meta() or {}
+            n_samples = int(meta.get("n_samples", meta.get("n", 0)) or 0)
+            warmup = bool(meta.get("warmup_mode", n_samples < int(TRAIN_WARMUP_MIN_ROWS)))
+            reliable = bool(meta.get("reliable", False)) and (not warmup)
+            if (not reliable) and (n_samples >= int(IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES)):
+                return float(IA_ACTIVACION_REAL_THR_POST_N15_UNREL)
             return float(IA_ACTIVACION_REAL_THR_POST_N15)
     except Exception:
         pass
