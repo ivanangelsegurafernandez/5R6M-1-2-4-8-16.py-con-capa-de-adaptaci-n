@@ -25,6 +25,7 @@ CALIB_BINS = [(0.50, 0.60), (0.60, 0.70), (0.70, 0.80), (0.80, 0.90), (0.90, 1.0
 EWMA_MIN_SIGNALS_MATURE = 8
 THRESHOLD_HINT_MIN_CLOSED = 20
 THRESHOLD_HINT_MIN_BIN_90 = 8
+EWMA_HEALTH_MIN_MATURE_BOTS = 2
 
 
 def _safe_float(v: Any) -> float | None:
@@ -211,31 +212,42 @@ def _adaptive_threshold_hint(calibration_bins: list[dict[str, Any]], ewma_health
             n90 = int(b.get('n', 0) or 0)
             break
 
+    advisory_only = bool(int(closed_n) < int(THRESHOLD_HINT_MIN_CLOSED) or int(n90) < int(THRESHOLD_HINT_MIN_BIN_90))
+
+    mature = [v for v in (ewma_health or {}).values() if bool(v.get('mature_sample', False))]
     global_health = None
-    if ewma_health:
-        global_health = sum(float(v['health_score']) for v in ewma_health.values()) / len(ewma_health)
+    health_used = False
+    if len(mature) >= int(EWMA_HEALTH_MIN_MATURE_BOTS):
+        global_health = sum(float(v.get('health_score', 0.0) or 0.0) for v in mature) / len(mature)
+        health_used = True
 
     dynamic = base
     reason = []
-    advisory_only = False
     confidence = 'low'
-    if int(closed_n) < int(THRESHOLD_HINT_MIN_CLOSED) or int(n90) < int(THRESHOLD_HINT_MIN_BIN_90):
-        advisory_only = True
+
+    if advisory_only:
         reason.append('muestra_insuficiente_para_automatizar')
+
+    # Sobreconfianza en 90-100: ajuste fuerte solo con evidencia suficiente;
+    # con muestra baja mantener ajuste más conservador.
     if over > 0.15:
-        dynamic += 0.04
+        dynamic += 0.04 if not advisory_only else 0.02
         reason.append('sobreconfianza_alta_90_100')
     elif over > 0.08:
-        dynamic += 0.02
+        dynamic += 0.02 if not advisory_only else 0.01
         reason.append('sobreconfianza_media_90_100')
 
-    if isinstance(global_health, (int, float)):
+    # Salud EWMA solo si hay madurez mínima por bot.
+    if health_used and isinstance(global_health, (int, float)):
         if global_health < 0.45:
             dynamic += 0.03
             reason.append('salud_bots_baja')
         elif global_health > 0.62:
             dynamic -= 0.02
             reason.append('salud_bots_fuerte')
+    else:
+        if ewma_health:
+            reason.append('salud_ewma_solo_informativa_por_baja_muestra')
 
     if not advisory_only:
         confidence = 'medium' if int(closed_n) < 80 else 'high'
@@ -244,14 +256,18 @@ def _adaptive_threshold_hint(calibration_bins: list[dict[str, Any]], ewma_health
         'base_threshold': base,
         'dynamic_threshold': max(0.75, min(0.93, dynamic)),
         'global_health_score': global_health,
+        'health_used_for_threshold': health_used,
+        'mature_bots_for_health': int(len(mature)),
         'advisory_only': advisory_only,
         'confidence': confidence,
         'min_closed_required': int(THRESHOLD_HINT_MIN_CLOSED),
         'min_n90_required': int(THRESHOLD_HINT_MIN_BIN_90),
+        'min_mature_bots_for_health': int(EWMA_HEALTH_MIN_MATURE_BOTS),
         'closed_signals': int(closed_n),
         'bin_90_100_n': int(n90),
         'reasons': reason,
     }
+
 
 
 def _parse_runtime_log(path: Path) -> dict[str, Any]:
@@ -318,6 +334,33 @@ def _readiness(meta: dict[str, Any], closed_n: int) -> dict[str, Any]:
         'reliable': reliable,
     }
 
+def _operational_guidance(bots: dict[str, dict[str, Any]], adaptive_hint: dict[str, Any], runtime: dict[str, Any]) -> dict[str, Any]:
+    silent_bots = sorted([b for b, d in bots.items() if int(d.get('signals_n', 0) or 0) == 0])
+    low_sample_bots = sorted([b for b, d in bots.items() if int(d.get('signals_n', 0) or 0) > 0 and int(d.get('signals_n', 0) or 0) < int(EWMA_MIN_SIGNALS_MATURE)])
+
+    yellow_flags: list[str] = []
+    health = adaptive_hint.get('global_health_score')
+    if isinstance(health, (int, float)) and float(health) < 0.45:
+        yellow_flags.append('salud_global_baja')
+    if bool(adaptive_hint.get('advisory_only', False)):
+        yellow_flags.append('decisiones_en_shadow_mode')
+    if not bool(runtime.get('exists', False)):
+        yellow_flags.append('falta_runtime_log')
+
+    return {
+        'official_gate_threshold': float(adaptive_hint.get('base_threshold', 0.85) or 0.85),
+        'shadow_suggested_threshold': float(adaptive_hint.get('dynamic_threshold', 0.85) or 0.85),
+        'apply_shadow_only': bool(adaptive_hint.get('advisory_only', True)),
+        'silent_bots': silent_bots,
+        'low_sample_bots': low_sample_bots,
+        'yellow_flags': yellow_flags,
+        'next_checkpoint': {
+            'closed_signals_target': int(adaptive_hint.get('min_closed_required', THRESHOLD_HINT_MIN_CLOSED) or THRESHOLD_HINT_MIN_CLOSED),
+            'bin_90_100_target': int(adaptive_hint.get('min_n90_required', THRESHOLD_HINT_MIN_BIN_90) or THRESHOLD_HINT_MIN_BIN_90),
+        },
+    }
+
+
 
 def build_report(runtime_log: Path | None) -> dict[str, Any]:
     diag = _read_json(DIAG)
@@ -375,6 +418,7 @@ def build_report(runtime_log: Path | None) -> dict[str, Any]:
             promos_tail = []
 
     readiness = _readiness(meta, len(closed))
+    guidance = _operational_guidance(bots, adaptive_hint, runtime)
 
     report = {
         'generated_at_utc': _now_iso(),
@@ -409,6 +453,7 @@ def build_report(runtime_log: Path | None) -> dict[str, Any]:
             'last_promotions_tail': promos_tail,
         },
         'readiness_recommendation': readiness,
+        'operational_guidance': guidance,
     }
     return report
 
@@ -419,6 +464,7 @@ def render_md(rep: dict[str, Any]) -> str:
     p85 = cal['precision_at_85']
     rd = rep['readiness_recommendation']
     adaptive = rep.get('adaptive_layer', {})
+    guidance = rep.get('operational_guidance', {})
 
     def pct(v: Any) -> str:
         return f"{float(v)*100:.1f}%" if isinstance(v, (int, float)) else "N/A"
@@ -456,6 +502,7 @@ def render_md(rep: dict[str, Any]) -> str:
     lines.append(f"- Umbral base: **{pct(hint.get('base_threshold'))}**")
     lines.append(f"- Umbral dinámico sugerido: **{pct(hint.get('dynamic_threshold'))}**")
     lines.append(f"- Salud global EWMA bots: **{pct(hint.get('global_health_score'))}**")
+    lines.append(f"- EWMA usada para umbral: **{'SI' if hint.get('health_used_for_threshold') else 'NO'}** (bots maduros: {int(hint.get('mature_bots_for_health', 0) or 0)}/{int(hint.get('min_mature_bots_for_health', EWMA_HEALTH_MIN_MATURE_BOTS))})")
     lines.append(f"- Modo: **{'solo sugerencia (no automatizar)' if hint.get('advisory_only') else 'apto para piloto controlado'}** | confianza: **{hint.get('confidence', 'low')}**")
     lines.append(f"- Cobertura mínima para automatizar: closed>={int(hint.get('min_closed_required', THRESHOLD_HINT_MIN_CLOSED))} y n(90-100)>={int(hint.get('min_n90_required', THRESHOLD_HINT_MIN_BIN_90))}; actual: closed={int(hint.get('closed_signals', 0) or 0)}, n90={int(hint.get('bin_90_100_n', 0) or 0)}")
     rs = hint.get('reasons') or []
@@ -469,7 +516,20 @@ def render_md(rep: dict[str, Any]) -> str:
             f"| {bot} | {int(d.get('n', 0) or 0)} | {'SI' if d.get('mature_sample') else 'NO'} | {pct(d.get('wr_raw'))} | {ci} | {pct(d.get('ewma_hit'))} | {pct(d.get('ewma_false_high_penalty'))} | {pct(d.get('health_score'))} |"
         )
     lines.append('')
-    lines.append('## 5) Salud de ejecución (auth/ws/timeout)')
+    lines.append('## 5) Guía operativa inmediata (shadow mode)')
+    lines.append(f"- Compuerta operativa actual: **{pct(guidance.get('official_gate_threshold'))}**")
+    lines.append(f"- Umbral sugerido en sombra: **{pct(guidance.get('shadow_suggested_threshold'))}**")
+    lines.append(f"- Aplicar solo en sombra: **{'SI' if guidance.get('apply_shadow_only') else 'NO'}**")
+    sb = guidance.get('silent_bots') or []
+    lb = guidance.get('low_sample_bots') or []
+    yf = guidance.get('yellow_flags') or []
+    lines.append(f"- Bots sin señales IA: {', '.join(sb) if sb else 'ninguno'}")
+    lines.append(f"- Bots con muestra baja (<{int(EWMA_MIN_SIGNALS_MATURE)}): {', '.join(lb) if lb else 'ninguno'}")
+    lines.append(f"- Focos amarillos: {', '.join(yf) if yf else 'ninguno'}")
+    cp = guidance.get('next_checkpoint') or {}
+    lines.append(f"- Próximo checkpoint: closed>={int(cp.get('closed_signals_target', THRESHOLD_HINT_MIN_CLOSED))}, n(90-100)>={int(cp.get('bin_90_100_target', THRESHOLD_HINT_MIN_BIN_90))}")
+    lines.append('')
+    lines.append('## 6) Salud de ejecución (auth/ws/timeout)')
     rh = rep['runtime_health']
     if not rh.get('exists'):
         lines.append('- No auditado en este run (falta `--runtime-log`).')
@@ -482,7 +542,7 @@ def render_md(rep: dict[str, Any]) -> str:
             top = sorted(wh.items(), key=lambda x: x[1], reverse=True)[:8]
             lines.append('- WHY-NO más frecuentes: ' + ', '.join([f"{k}:{v}" for k, v in top]))
     lines.append('')
-    lines.append('## 6) Recomendación de cuándo correr este programa')
+    lines.append('## 7) Recomendación de cuándo correr este programa')
     lines.append('- **Recomendado siempre**: al iniciar sesión y luego cada 30-60 min.')
     lines.append('- **Corte de calidad fuerte**: después de cada bloque de +20 cierres nuevos.')
     lines.append('- **Punto mínimo para decisiones estructurales**:')
@@ -490,11 +550,12 @@ def render_md(rep: dict[str, Any]) -> str:
         lines.append(f"  - {'✅' if ok else '❌'} {k}")
     lines.append(f"- Ready for full diagnosis: **{rd['ready_for_full_diagnosis']}**")
     lines.append('')
-    lines.append('## 7) Qué falta corregir si no está “bien”')
+    lines.append('## 8) Qué falta corregir si no está “bien”')
     lines.append('- Nota: `Gap Prob-Hit señales` usa SOLO señales cerradas en `ia_signals_log.csv` y puede diferir de `WR last40 (csv)` del bot.')
     lines.append(f'- Gaps por bot se publican solo si `n señales IA >= {MIN_SIGNALS_FOR_BOT_GAP}` para evitar conclusiones con muestra mínima.')
     lines.append('- Si `precision@85` baja o n es pequeño: recalibrar/proteger compuerta.')
     lines.append('- Si gap Prob-Hit por bot es alto: bajar exposición o bloquear bot temporalmente.')
+    lines.append('- EWMA por bot con n bajo debe leerse como semáforo blando; evitar castigos duros hasta tener muestra madura.')
     lines.append('- Si auth/ws/timeouts suben: estabilizar conectividad antes de evaluar modelo.')
     lines.append('- Si WHY-NO se concentra en `trigger_no`/`confirm_pending`: revisar timing de señales y trigger.')
     return '\n'.join(lines) + '\n'
