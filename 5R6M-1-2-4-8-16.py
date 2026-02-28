@@ -219,6 +219,12 @@ IA_SHRINK_ALPHA = 0.60               # p_ajustada = alpha*p + (1-alpha)*tasa_bas
 IA_SHRINK_ALPHA_MIN = 0.45           # piso de mezcla (más conservador en descalibración fuerte)
 IA_SHRINK_ALPHA_MAX = 0.85           # techo de mezcla (más sensible cuando la calibración mejora)
 IA_BASE_RATE_WINDOW = 300            # cierres recientes para tasa base rolling
+# Guardrail explícito de sobreconfianza en bucket alto (fase 1, bajo riesgo).
+IA_OVERCONF_BUCKET_MIN_PROB = 0.90
+IA_OVERCONF_MIN_N = 20
+IA_OVERCONF_GAP_MAX_PP = 0.15
+IA_OVERCONF_DYNAMIC_CAP = 0.90
+IA_CHECKPOINT_CLOSED_STEP = 20
 # Cap conservador de probabilidad durante warmup para evitar inflado (ej. 99-100%).
 IA_WARMUP_PROB_CAP_MIN = 0.70
 IA_WARMUP_PROB_CAP_MAX = 0.85
@@ -3355,6 +3361,8 @@ def _safe_read_csv_any_encoding(path: str) -> pd.DataFrame | None:
     return None
 
 _IA_RUNTIME_CAL_CACHE = {"ts": 0.0, "base_rate": 0.5, "n70": 0}
+_IA_OVERCONF_CACHE = {"ts": 0.0, "active": False, "cap": 1.0, "n": 0, "gap_pp": 0.0}
+_IA_CHECKPOINT_CACHE = {"last_closed": 0, "last_ts": 0.0}
 _GATE_ACTIVO_CACHE = {}
 _GATE_SEGMENTO_CACHE = {}
 
@@ -3880,6 +3888,98 @@ def _ajustar_prob_por_evidencia_bot(bot: str, prob: float | None) -> float | Non
 
         p2 = float(max(0.0, min(1.0, p + delta)))
         return p2
+    except Exception:
+        return prob
+
+
+
+
+def _get_overconf_guardrail_state(force: bool = False, ttl_s: float = 15.0) -> dict:
+    """Estado de sobreconfianza en bucket alto para aplicar cap temporal."""
+    global _IA_OVERCONF_CACHE
+    now = time.time()
+    try:
+        if (not force) and ((now - float(_IA_OVERCONF_CACHE.get("ts", 0.0) or 0.0)) <= float(ttl_s)):
+            return dict(_IA_OVERCONF_CACHE)
+
+        rep = auditar_calibracion_seniales_reales(min_prob=float(IA_OVERCONF_BUCKET_MIN_PROB)) or {}
+        n = int(rep.get("n", 0) or 0)
+        avg_pred = rep.get("avg_pred", None)
+        win_rate = rep.get("win_rate", None)
+        if isinstance(avg_pred, (int, float)) and isinstance(win_rate, (int, float)):
+            gap_pp = float((float(avg_pred) - float(win_rate)) * 100.0)
+            gap_abs = float(abs(float(avg_pred) - float(win_rate)))
+        else:
+            gap_pp = 0.0
+            gap_abs = 0.0
+
+        active = bool((n >= int(IA_OVERCONF_MIN_N)) and (gap_abs >= float(IA_OVERCONF_GAP_MAX_PP)) and (gap_pp > 0.0))
+        out = {
+            "ts": now,
+            "active": bool(active),
+            "cap": float(IA_OVERCONF_DYNAMIC_CAP if active else 1.0),
+            "n": int(n),
+            "gap_pp": float(gap_pp),
+        }
+        _IA_OVERCONF_CACHE = out
+        return dict(out)
+    except Exception:
+        return dict(_IA_OVERCONF_CACHE)
+
+
+def _maybe_emit_calibration_checkpoint(force: bool = False) -> None:
+    """Emitir checkpoint compacto cada +IA_CHECKPOINT_CLOSED_STEP cierres reales."""
+    global _IA_CHECKPOINT_CACHE
+    try:
+        now = time.time()
+        rep = auditar_calibracion_seniales_reales(min_prob=float(IA_CALIB_THRESHOLD)) or {}
+        closed = int(rep.get("n_total_closed", rep.get("n", 0)) or 0)
+        step = max(1, int(IA_CHECKPOINT_CLOSED_STEP))
+        last_closed = int(_IA_CHECKPOINT_CACHE.get("last_closed", 0) or 0)
+        last_ts = float(_IA_CHECKPOINT_CACHE.get("last_ts", 0.0) or 0.0)
+
+        if (not force):
+            if (closed - last_closed) < step:
+                return
+            if (now - last_ts) < 20.0:
+                return
+
+        wr = rep.get("win_rate", None)
+        ap = rep.get("avg_pred", None)
+        ece = rep.get("ece", None)
+        brier = rep.get("brier", None)
+        msg = (
+            f"📊 IA checkpoint: cerradas={closed} | "
+            f"Pred={((float(ap)*100.0) if isinstance(ap,(int,float)) else 0.0):.1f}% | "
+            f"Real={((float(wr)*100.0) if isinstance(wr,(int,float)) else 0.0):.1f}% | "
+            f"ECE={float(ece):.3f} | Brier={float(brier):.3f}"
+        )
+        _ag_evt(msg)
+
+        high = _get_overconf_guardrail_state(force=True)
+        if bool(high.get("active", False)):
+            _ag_evt(
+                "🛡️ IA guardrail: sobreconfianza alta detectada "
+                f"(n90={int(high.get('n',0))}, gap={float(high.get('gap_pp',0.0)):+.1f}pp). "
+                f"Cap temporal <= {float(high.get('cap',1.0))*100.0:.1f}%."
+            )
+
+        _IA_CHECKPOINT_CACHE = {"last_closed": int(closed), "last_ts": now}
+    except Exception:
+        pass
+
+
+def _cap_prob_por_sobreconfianza(prob: float | None) -> float | None:
+    """Cap dinámico cuando el bucket 90-100% se descalibra por sobreestimación."""
+    try:
+        if not isinstance(prob, (int, float)):
+            return prob
+        p = max(0.0, min(1.0, float(prob)))
+        st = _get_overconf_guardrail_state(force=False)
+        if not bool(st.get("active", False)):
+            return p
+        cap = float(st.get("cap", IA_OVERCONF_DYNAMIC_CAP) or IA_OVERCONF_DYNAMIC_CAP)
+        return float(min(p, max(0.0, min(1.0, cap))))
     except Exception:
         return prob
 
@@ -5276,6 +5376,7 @@ def actualizar_prob_ia_bot(bot: str):
             p = _ajustar_prob_operativa(float(p))
             p = _ajustar_prob_por_evidencia_bot(bot, float(p))
             p = _cap_prob_por_madurez(float(p), bot=bot)
+            p = _cap_prob_por_sobreconfianza(float(p))
             estado_bots[bot]["prob_ia"] = float(p)
             estado_bots[bot]["ia_ready"] = True
             estado_bots[bot]["ia_last_err"] = None
@@ -5529,6 +5630,9 @@ def actualizar_prob_ia_todos():
             _IA_CLONED_PROB_TICKS = 0
     except Exception:
         pass
+
+    # 5) Checkpoint ligero de calibración cada bloque de cierres
+    _maybe_emit_calibration_checkpoint(force=False)
 
 def _sensor_plano_bot(bot: str, lookback: int = 80) -> tuple[bool, dict]:
     """Detecta si un bot tiene demasiadas features pegadas (dominancia alta)."""
