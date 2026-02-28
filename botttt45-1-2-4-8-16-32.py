@@ -1572,6 +1572,16 @@ async def esperar_resultado(ws, contract_id, symbol, direccion, monto, rsi9, rsi
                     # CIERRE CERRADO (DICT MODERNO)
                     # ==========================
                     puntaje01 = _norm_puntaje_01(condiciones)  # helper REAL del bot
+                    ack_ctx = estado_bot.get("ack_ctx", {}) if isinstance(estado_bot.get("ack_ctx", {}), dict) else {}
+                    ia_prob_en_juego = ack_ctx.get("ia_prob_en_juego", "")
+                    ia_prob_source = str(ack_ctx.get("ia_prob_source", "") or "").strip()
+                    ia_ready_ack = bool(ack_ctx.get("ia_ready_ack", False))
+                    if isinstance(ia_prob_en_juego, (int, float)):
+                        ia_prob_source = ia_prob_source or "HUD"
+                        ia_ready_ack = True
+                    else:
+                        ia_prob_source = ia_prob_source or "NO_READY"
+
                     row_dict = {
                         "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "activo": symbol,
@@ -1596,12 +1606,12 @@ async def esperar_resultado(ws, contract_id, symbol, direccion, monto, rsi9, rsi
                         "trade_status": "CERRADO",
                         "epoch": int(epoch_val),
                         "ts": ts_val,
-                        "ia_prob_en_juego": estado_bot.get("ack_ctx", {}).get("ia_prob_en_juego", ""),
-                        "ia_prob_source": estado_bot.get("ack_ctx", {}).get("ia_prob_source", ""),
-                        "ia_decision_id": estado_bot.get("ack_ctx", {}).get("ia_decision_id", f"{NOMBRE_BOT}|{int(epoch_val)}"),
-                        "ia_gate_real": estado_bot.get("ack_ctx", {}).get("ia_gate_real", ""),
-                        "ia_modo_ack": estado_bot.get("ack_ctx", {}).get("ia_modo_ack", ""),
-                        "ia_ready_ack": estado_bot.get("ack_ctx", {}).get("ia_ready_ack", ""),
+                        "ia_prob_en_juego": ia_prob_en_juego,
+                        "ia_prob_source": ia_prob_source,
+                        "ia_decision_id": ack_ctx.get("ia_decision_id", f"{NOMBRE_BOT}|{int(epoch_val)}"),
+                        "ia_gate_real": ack_ctx.get("ia_gate_real", ""),
+                        "ia_modo_ack": ack_ctx.get("ia_modo_ack", ""),
+                        "ia_ready_ack": ia_ready_ack,
                     }
                     _write_row_dict_atomic(ARCHIVO_CSV, row_dict)
 

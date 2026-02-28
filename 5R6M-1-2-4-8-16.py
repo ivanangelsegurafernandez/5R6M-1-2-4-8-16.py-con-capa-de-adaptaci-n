@@ -188,7 +188,9 @@ ORACULO_DELTA_PRE = 0.05
 IA_VERDE_THR = IA_ACTIVACION_REAL_THR
 IA_SUCESO_LOOKBACK = 16
 IA_SUCESO_DELTA_MIN = 0.035
-IA_SUCESO_EVENTO_MIN = 0.55
+IA_SUCESO_EVENTO_MIN = 0.20
+IA_SUCESO_EVENTO_Q = 0.85
+IA_SUCESO_EVENTO_HIST = 120
 IA_SENSOR_DOM_HOT = 0.95
 IA_SENSOR_MIN_HOT_FEATS = 3
 IA_SENSOR_MIN_SAMPLE = 30
@@ -5507,6 +5509,10 @@ def actualizar_prob_ia_bot(bot: str):
             p = _ajustar_prob_operativa(float(p))
             p = _ajustar_prob_por_evidencia_bot(bot, float(p))
             p = _ajustar_prob_por_racha_reciente(bot, float(p))
+            try:
+                estado_bots[bot]["ia_prob_pre_cap"] = float(max(0.0, min(1.0, float(p))))
+            except Exception:
+                pass
             p = _cap_prob_por_madurez(float(p), bot=bot)
             p = _cap_prob_por_sobreconfianza(float(p))
             estado_bots[bot]["prob_ia"] = float(p)
@@ -5854,12 +5860,32 @@ def _detectar_suceso_prob_bot(bot: str, p_now: float | None) -> tuple[bool, floa
 
 
 def _evento_contexto_activo(bot: str) -> bool:
-    """True si hay evento de mercado razonable para validar un suceso relativo."""
+    """True si el contexto reciente sugiere evento en la escala real de features."""
     try:
         row = leer_ultima_fila_features_para_pred(bot) or {}
         brk = float(row.get("breakout", 0.0) or 0.0)
         reb = float(row.get("es_rebote", 0.0) or 0.0)
-        return bool(max(brk, reb) >= float(IA_SUCESO_EVENTO_MIN))
+
+        vals = []
+        rows = leer_features_bot(bot, n=int(IA_SUCESO_EVENTO_HIST))
+        if isinstance(rows, list):
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                try:
+                    vb = float(r.get("breakout", 0.0) or 0.0)
+                    vr = float(r.get("es_rebote", 0.0) or 0.0)
+                    v = max(vb, vr)
+                    if np.isfinite(v):
+                        vals.append(v)
+                except Exception:
+                    continue
+        dyn_thr = float(IA_SUCESO_EVENTO_MIN)
+        if vals:
+            qv = float(np.quantile(np.asarray(vals, dtype=float), float(IA_SUCESO_EVENTO_Q)))
+            dyn_thr = float(max(float(IA_SUCESO_EVENTO_MIN), min(0.95, qv)))
+
+        return bool(max(brk, reb) >= dyn_thr)
     except Exception:
         return False
 
@@ -9558,6 +9584,7 @@ def mostrar_panel():
             why_txt = "none" if not why_reasons else ",".join(why_reasons)
 
             p_raw_best = None
+            p_pre_best = None
             try:
                 bb = dyn_gate.get("best_bot") if isinstance(dyn_gate, dict) else None
                 if isinstance(bb, str) and bb in estado_bots:
@@ -9573,15 +9600,20 @@ def mostrar_panel():
                             pf = stbb.get("prob_ia", None)
                             if isinstance(pf, (int, float)) and np.isfinite(float(pf)):
                                 p_raw_best = float(pf)
+                    pp = stbb.get("ia_prob_pre_cap", None)
+                    if isinstance(pp, (int, float)) and np.isfinite(float(pp)):
+                        p_pre_best = float(pp)
             except Exception:
                 p_raw_best = None
+                p_pre_best = None
             p_raw_txt = f"{p_raw_best*100:.1f}%" if isinstance(p_raw_best, (int, float)) else "--"
+            p_pre_txt = f"{p_pre_best*100:.1f}%" if isinstance(p_pre_best, (int, float)) else "--"
 
             print(
                 padding
                 + Fore.YELLOW
                 + f"🧩 WHY-NO: CAP≈{cap_now*100:.1f}% (warmup={'sí' if warmup_live else 'no'}) | "
-                  f"AUTO={auto_state} reliable={'sí' if reliable else 'no'} canary={'sí' if canary_live else 'no'} n={n_samples_live} p_raw={p_raw_txt} p_best={best_prob*100:.1f}% why={why_txt} | canary_prog={canary_prog_txt} hit={c_hit:.1f}% | "
+                  f"AUTO={auto_state} reliable={'sí' if reliable else 'no'} canary={'sí' if canary_live else 'no'} n={n_samples_live} p_raw={p_raw_txt} p_pre={p_pre_txt} p_cap={best_prob*100:.1f}% why={why_txt} | canary_prog={canary_prog_txt} hit={c_hit:.1f}% | "
                   f"ROOF mode={mode_h} confirm={confirm_txt_h} trigger_ok={'sí' if trigger_ok_h else 'no'} gate_consumed={'sí' if clone_gate else 'no'}"
             )
 
@@ -12326,7 +12358,8 @@ async def main():
 
                                         regime_score = _score_regimen_contexto(_ultimo_contexto_operativo_bot(b))
                                         p_post = float(p)
-                                        score_final = float(p_post)
+                                        p_rank = float(estado_bots.get(b, {}).get("ia_prob_pre_cap", p_post) or p_post)
+                                        score_final = float(max(0.0, min(1.0, p_rank)))
                                         estado_bots[b]["ia_regime_score"] = float(regime_score)
                                         estado_bots[b]["ia_evidence_n"] = int(estado_bots[b].get("ia_evidence_n", 0) or 0)
                                         estado_bots[b]["ia_evidence_wr"] = float(estado_bots[b].get("ia_evidence_wr", 0.0) or 0.0)
@@ -12538,10 +12571,34 @@ async def main():
                                         f"🟠 IA AUTO CANARY escape: se habilita REAL por compuerta fuerte ({canary_escape_why})."
                                     )
                                 else:
-                                    agregar_evento(
-                                        f"🟡 IA AUTO en CANARY: REAL bloqueado temporalmente ({c_prog}/{c_tgt}, hit={c_hit:.1f}%)."
-                                    )
-                                    candidatos = []
+                                    # Fallback anti-deadlock: con progreso mínimo en canary,
+                                    # permitir 1 entrada controlada si la compuerta fuerte se sostiene.
+                                    fallback_ok = False
+                                    try:
+                                        if (c_prog >= max(3, int(c_tgt * 0.25))) and candidatos:
+                                            top = candidatos[0]
+                                            b_top = str(top[1])
+                                            p_top = float(top[3])
+                                            dgate_fb = dyn_gate if isinstance(dyn_gate, dict) else {}
+                                            conf_need_fb = int(dgate_fb.get("confirm_need", DYN_ROOF_CONFIRM_TICKS) or DYN_ROOF_CONFIRM_TICKS)
+                                            conf_ok_fb = int(dgate_fb.get("confirm_streak", 0) or 0) >= conf_need_fb
+                                            trig_ok_fb = bool(dgate_fb.get("trigger_ok", False))
+                                            floor_ok_fb = p_top >= float(_umbral_real_operativo_actual())
+                                            if b_top == str(dgate_fb.get("best_bot", "")) and conf_ok_fb and trig_ok_fb and floor_ok_fb:
+                                                fallback_ok = True
+                                    except Exception:
+                                        fallback_ok = False
+
+                                    if fallback_ok:
+                                        agregar_evento(
+                                            f"🟡 IA AUTO CANARY fallback: se permite 1 entrada controlada ({c_prog}/{c_tgt}, hit={c_hit:.1f}%)."
+                                        )
+                                        candidatos = candidatos[:1]
+                                    else:
+                                        agregar_evento(
+                                            f"🟡 IA AUTO en CANARY: REAL bloqueado temporalmente ({c_prog}/{c_tgt}, hit={c_hit:.1f}%)."
+                                        )
+                                        candidatos = []
                             elif not modelo_reliable:
                                 n_samples_live = int(meta_live.get("n_samples", meta_live.get("n", 0)) or 0)
                                 auc_live = float(meta_live.get("auc", 0.0) or 0.0)
