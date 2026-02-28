@@ -2243,7 +2243,11 @@ async def ejecutar_panel():
                         if (not ack_visto) and epoch_pre:
                             ack = leer_ia_ack(NOMBRE_BOT)
                             try:
-                                if ack and int(ack.get("epoch", 0)) >= int(epoch_pre):
+                                ep_ack = int(float(ack.get("epoch", 0) or 0)) if ack else 0
+                                ep_pre = int(float(epoch_pre or 0))
+                                # tolera pequeños desfases de epoch para no dejar telemetría en NO_READY
+                                epoch_ok = bool(ep_ack >= max(0, ep_pre - 2))
+                                if ack and epoch_ok:
                                     p = ack.get("prob", None)
                                     p_hud = ack.get("prob_hud", None)
                                     p_play = ack.get("prob_en_juego", None)
@@ -2260,18 +2264,20 @@ async def ejecutar_panel():
                                     modo = ack.get("modo", "OFF")
                                     thr_real = ack.get("real_thr", None)
                                     reliable_ack = bool(ack.get("reliable", False))
+                                    ready_ack = bool(ack.get("ia_ready", False))
                                     modo_norm = str(modo or "OFF").strip().upper()
-                                    if modo_norm == "OFF":
+                                    # Si hay prob visible, no forzar vacío solo por modo OFF transitorio.
+                                    if modo_norm == "OFF" and (not isinstance(p_show, (int, float))):
                                         p_show = None
                                     auc_txt = f"{auc:.3f}" if (reliable_ack and 0.0 < auc < 1.0 and modo_norm != "OFF") else "N/A"
 
                                     estado_bot["ack_ctx"] = {
                                         "ia_prob_en_juego": p_show if isinstance(p_show, (int, float)) else "",
-                                        "ia_prob_source": str(ack.get("prob_source", "")),
+                                        "ia_prob_source": str(ack.get("prob_source", "")) or ("HUD" if isinstance(p_show, (int, float)) else "NO_READY"),
                                         "ia_decision_id": str(ack.get("decision_id", "")),
                                         "ia_gate_real": float(thr_real) if isinstance(thr_real, (int, float)) else "",
                                         "ia_modo_ack": str(modo),
-                                        "ia_ready_ack": bool(ack.get("ia_ready", False)),
+                                        "ia_ready_ack": bool(ready_ack or isinstance(p_show, (int, float))),
                                     }
 
                                     if isinstance(p_show, (int, float)):
