@@ -467,6 +467,10 @@ IA_TARGET_PRECISION = 0.70
 IA_TARGET_PRECISION_FLOOR = 0.65   # piso mínimo para declarar confiable
 IA_TARGET_MIN_SIGNALS = 30         # mínimo de señales en zona alta para validar
 
+# Guardas de promoción de campeón: evitar reemplazar por modelos débiles/colapsados.
+TRAIN_PROMOTE_MIN_AUC = 0.50
+TRAIN_PROMOTE_MIN_FEATURES = 5
+
 FEATURE_NAMES_PROD = list(FEATURE_ALWAYS_KEEP)
 FEATURE_NAMES_SHADOW = [f for f in FEATURE_NAMES_CORE_13 if f not in FEATURE_NAMES_PROD]
 FEATURE_NAMES_DEFAULT = list(FEATURE_NAMES_CORE_13)
@@ -9241,6 +9245,28 @@ def maybe_retrain(force: bool = False):
                     )
                 except Exception:
                     pass
+
+        # 16.5) Guardia de promoción: si el candidato sale flojo, NO tomar volante.
+        promote_ok = bool(True)
+        promote_reasons = []
+        try:
+            if float(auc) < float(TRAIN_PROMOTE_MIN_AUC):
+                promote_ok = False
+                promote_reasons.append(f"auc<{float(TRAIN_PROMOTE_MIN_AUC):.2f}")
+            if len(feats_used) < int(TRAIN_PROMOTE_MIN_FEATURES):
+                promote_ok = False
+                promote_reasons.append(f"feats<{int(TRAIN_PROMOTE_MIN_FEATURES)}")
+        except Exception:
+            pass
+
+        if (not force) and (not promote_ok):
+            try:
+                agregar_evento(
+                    f"🧯 IA: candidato NO promovido ({', '.join(promote_reasons)}). Se mantiene campeón previo."
+                )
+            except Exception:
+                pass
+            return False
 
         # 17) Guardado atómico (compatible con tu función si existe)
         meta = {
