@@ -200,6 +200,11 @@ AUTO_REAL_MARGIN = 0.01   # pequeño margen para evitar quedar fuera por décima
 AUTO_REAL_LOG_MAX_ROWS = 300  # máximo de señales históricas usadas en la calibración
 AUTO_REAL_LIVE_MIN_BOTS = 3   # mínimos bots con prob viva para calibración por tick
 
+# Shadow-mode desde reporte integral (solo diagnóstico, no altera compuerta REAL).
+SHADOW_GUIDANCE_ENABLE = True
+SHADOW_GUIDANCE_JSON = "reporte_integral_sistema_ia.json"
+SHADOW_GUIDANCE_TTL_S = 20.0
+
 # Umbral "operativo/UI" (señales actuales, semáforo, etc.)
 IA_METRIC_THRESHOLD = IA_ACTIVACION_REAL_THR
 # Modo clásico solicitado: activación REAL inmediata con prob IA >= 85%.
@@ -5714,6 +5719,48 @@ def ia_prob_valida(bot: str, max_age_s: float = 10.0) -> bool:
 _AUTO_REAL_CACHE = {"ts": 0.0, "thr": float(IA_ACTIVACION_REAL_THR), "n": 0, "max": 0.0}
 
 
+_SHADOW_GUIDANCE_CACHE = {"ts": 0.0, "data": {}}
+
+
+def _leer_shadow_guidance(ttl_s: float = SHADOW_GUIDANCE_TTL_S) -> dict:
+    """Lee guía operativa del reporte integral en modo sombra (si existe)."""
+    now = time.time()
+    try:
+        if not bool(SHADOW_GUIDANCE_ENABLE):
+            return {}
+        if (now - float(_SHADOW_GUIDANCE_CACHE.get("ts", 0.0) or 0.0)) <= float(ttl_s):
+            return dict(_SHADOW_GUIDANCE_CACHE.get("data", {}) or {})
+
+        path = str(globals().get("SHADOW_GUIDANCE_JSON", "reporte_integral_sistema_ia.json") or "reporte_integral_sistema_ia.json")
+        if not os.path.exists(path):
+            _SHADOW_GUIDANCE_CACHE["ts"] = now
+            _SHADOW_GUIDANCE_CACHE["data"] = {}
+            return {}
+
+        data = {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+        except Exception:
+            data = {}
+
+        og = data.get("operational_guidance", {}) if isinstance(data, dict) else {}
+        out = {
+            "shadow_thr": float(og.get("shadow_suggested_threshold", 0.0) or 0.0),
+            "official_thr": float(og.get("official_gate_threshold", 0.0) or 0.0),
+            "apply_shadow_only": bool(og.get("apply_shadow_only", True)),
+            "yellow_flags": list(og.get("yellow_flags", []) or []),
+            "silent_bots": list(og.get("silent_bots", []) or []),
+            "low_sample_bots": list(og.get("low_sample_bots", []) or []),
+        }
+
+        _SHADOW_GUIDANCE_CACHE["ts"] = now
+        _SHADOW_GUIDANCE_CACHE["data"] = out
+        return out
+    except Exception:
+        return {}
+
+
 def _leer_probs_historicas_ia(max_rows: int = AUTO_REAL_LOG_MAX_ROWS) -> list[float]:
     """Lee probs históricas del log de señales IA cerradas para calibrar umbral REAL."""
     path = IA_SIGNALS_LOG
@@ -9225,6 +9272,12 @@ def mostrar_panel():
         owner = REAL_OWNER_LOCK if REAL_OWNER_LOCK in BOT_NAMES else leer_token_actual()
         owner_txt = "DEMO" if owner in (None, "none") else f"REAL:{owner}"
         mejor_txt = "--" if mejor is None else f"{mejor[0]} {mejor[1]*100:.1f}%"
+        shadow = _leer_shadow_guidance()
+        shadow_thr = float(shadow.get("shadow_thr", 0.0) or 0.0)
+        shadow_apply = bool(shadow.get("apply_shadow_only", True))
+        shadow_txt = "--"
+        if shadow_thr > 0.0:
+            shadow_txt = f"{shadow_thr*100:.1f}%({'shadow' if shadow_apply else 'pilot'})"
         suceso_vals = [float(estado_bots.get(b, {}).get("ia_suceso_idx", 0.0) or 0.0) for b in BOT_NAMES]
         best_suceso = max(suceso_vals) if suceso_vals else 0.0
         sensores_planos = sum(1 for b in BOT_NAMES if bool(estado_bots.get(b, {}).get("ia_sensor_plano", False)))
@@ -9233,7 +9286,7 @@ def mostrar_panel():
         n_min_disp = min(int(n_min_real), int(n_req_real))
         n_min_extra = max(0, int(n_min_real) - int(n_req_real))
         n_min_txt = f"{n_min_disp}/{n_req_real}" + (f" (+{n_min_extra} acum)" if n_min_extra > 0 else "")
-        print(padding + Fore.CYAN + f"📊 Prob IA visibles: {bots_con_prob}/{len(BOT_NAMES)} | OBS≥{umbral_obs*100:.1f}%: {bots_obs} | REAL≥{umbral_real_vigente*100:.1f}%: {bots_real} | Mejor: {mejor_txt} | Suceso↑: {best_suceso:5.1f} | SENSOR_PLANO: {sensores_planos}/{len(BOT_NAMES)} (warmup:{sensores_warmup}) | n_min_real: {n_min_txt} | Token: {owner_txt}")
+        print(padding + Fore.CYAN + f"📊 Prob IA visibles: {bots_con_prob}/{len(BOT_NAMES)} | OBS≥{umbral_obs*100:.1f}%: {bots_obs} | REAL≥{umbral_real_vigente*100:.1f}%: {bots_real} | SHADOW≈{shadow_txt} | Mejor: {mejor_txt} | Suceso↑: {best_suceso:5.1f} | SENSOR_PLANO: {sensores_planos}/{len(BOT_NAMES)} (warmup:{sensores_warmup}) | n_min_real: {n_min_txt} | Token: {owner_txt}")
 
         try:
             meta_live = resolver_canary_estado(leer_model_meta() or {})
