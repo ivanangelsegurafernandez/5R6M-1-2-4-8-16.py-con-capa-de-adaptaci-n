@@ -1,22 +1,22 @@
 # Reporte Integral de Salud IA
 
-Generado UTC: `2026-02-27T23:55:21.506237+00:00`
+Generado UTC: `2026-02-28T00:03:22.245127+00:00`
 
 ## 1) Calibración real de probabilidades
-- Señales cerradas: **12**
-- Precisión @>=70%: **58.3%** (n=12)
-- Precisión @>=85%: **58.3%** (n=12)
+- Señales cerradas: **5**
+- Precisión @>=70%: **80.0%** (n=5)
+- Precisión @>=85%: **80.0%** (n=5)
 - ⚠️ Muestra cerrada muy baja: estas precisiones son orientativas, no concluyentes.
 
 ## 2) Desalineación Prob IA vs hitrate por bot (last_n=40)
 | Bot | WR last40 (csv) | n señales IA | Hit last40 (señales) | Prob media last40 (señales) | Gap Prob-Hit señales | Gap Prob-WR csv | Muestra señales |
 |---|---:|---:|---:|---:|---:|---:|---|
-| fulll45 | 45.0% | 3 | 66.7% | 92.5% | N/A | N/A | BAJA(<5) |
-| fulll46 | 50.0% | 2 | 50.0% | 97.4% | N/A | N/A | BAJA(<5) |
-| fulll47 | 55.0% | 2 | 50.0% | 98.9% | N/A | N/A | BAJA(<5) |
-| fulll48 | 55.0% | 1 | 0.0% | 98.3% | N/A | N/A | BAJA(<5) |
-| fulll49 | 40.0% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
-| fulll50 | 55.0% | 4 | 75.0% | 97.5% | N/A | N/A | BAJA(<5) |
+| fulll45 | 50.0% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
+| fulll46 | 47.5% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
+| fulll47 | 57.5% | 1 | 100.0% | 90.7% | N/A | N/A | BAJA(<5) |
+| fulll48 | 52.5% | 1 | 0.0% | 95.1% | N/A | N/A | BAJA(<5) |
+| fulll49 | 67.5% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
+| fulll50 | 60.0% | 3 | 100.0% | 89.8% | N/A | N/A | BAJA(<5) |
 
 ## 3) Calibración por rangos de probabilidad
 | Rango Prob IA | n | Prob media | Winrate real | IC95% winrate | Gap (Prob-Winrate) |
@@ -24,8 +24,8 @@ Generado UTC: `2026-02-27T23:55:21.506237+00:00`
 | 50-60% | 0 | N/A | N/A | N/A | N/A |
 | 60-70% | 0 | N/A | N/A | N/A | N/A |
 | 70-80% | 0 | N/A | N/A | N/A | N/A |
-| 80-90% | 1 | 88.0% | 100.0% | [20.7%, 100.0%] | -12.0% |
-| 90-100% | 11 | 97.3% | 54.5% | [28.0%, 78.7%] | 42.8% |
+| 80-90% | 2 | 86.2% | 100.0% | [34.2%, 100.0%] | -13.8% |
+| 90-100% | 3 | 94.2% | 66.7% | [20.8%, 93.9%] | 27.5% |
 
 ## 4) Capa adaptativa sugerida (EWMA + umbral dinámico)
 - Umbral base: **85.0%**
@@ -33,23 +33,21 @@ Generado UTC: `2026-02-27T23:55:21.506237+00:00`
 - Salud global EWMA bots: **N/A**
 - EWMA usada para umbral: **NO** (bots maduros: 0/2)
 - Modo: **solo sugerencia (no automatizar)** | confianza: **low**
-- Cobertura mínima para automatizar: closed>=20 y n(90-100)>=8; actual: closed=12, n90=11
+- Cobertura mínima para automatizar: closed>=20 y n(90-100)>=8; actual: closed=5, n90=3
 - Razones: muestra_insuficiente_para_automatizar, sobreconfianza_alta_90_100, salud_ewma_solo_informativa_por_baja_muestra
 
 | Bot | n señales | Muestra madura | WR crudo | IC95% WR | EWMA acierto | EWMA penalización falsas altas | Salud bot |
 |---|---:|---|---:|---:|---:|---:|---:|
-| fulll45 | 3 | NO | 66.7% | [20.8%, 93.9%] | 75.0% | 25.0% | 66.2% |
-| fulll46 | 2 | NO | 50.0% | [9.5%, 90.5%] | 75.0% | 25.0% | 66.2% |
-| fulll47 | 2 | NO | 50.0% | [9.5%, 90.5%] | 75.0% | 25.0% | 66.2% |
+| fulll47 | 1 | NO | 100.0% | [20.7%, 100.0%] | 100.0% | 0.0% | 100.0% |
 | fulll48 | 1 | NO | 0.0% | [0.0%, 79.3%] | 0.0% | 100.0% | 0.0% |
-| fulll50 | 4 | NO | 75.0% | [30.1%, 95.4%] | 75.0% | 25.0% | 66.2% |
+| fulll50 | 3 | NO | 100.0% | [43.8%, 100.0%] | 100.0% | 0.0% | 100.0% |
 
 ## 5) Guía operativa inmediata (shadow mode)
 - Compuerta operativa actual: **85.0%**
 - Umbral sugerido en sombra: **87.0%**
 - Aplicar solo en sombra: **SI**
-- Bots sin señales IA: fulll49
-- Bots con muestra baja (<8): fulll45, fulll46, fulll47, fulll48, fulll50
+- Bots sin señales IA: fulll45, fulll46, fulll49
+- Bots con muestra baja (<8): fulll47, fulll48, fulll50
 - Focos amarillos: decisiones_en_shadow_mode, falta_runtime_log
 - Próximo checkpoint: closed>=20, n(90-100)>=8
 
