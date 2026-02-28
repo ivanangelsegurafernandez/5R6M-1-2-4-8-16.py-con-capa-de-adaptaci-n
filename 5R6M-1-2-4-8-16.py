@@ -713,6 +713,8 @@ IA90_stats = {bot: {"n": 0, "ok": 0, "pct": 0.0, "pct_raw": 0.0, "pct_smooth": 5
 # Ventana corta para diagnosticar el bloqueo dominante del embudo en HUD.
 HUD_BLOQUEO_WINDOW = 120
 HUD_BLOQUEOS_RECIENTES = deque(maxlen=HUD_BLOQUEO_WINDOW)
+HUD_BOT_GATE_DIAG_EVERY_S = 6.0
+_LAST_HUD_BOT_GATE_DIAG_TS = 0.0
 
 EVENTO_MAX_CHARS = 220
 
@@ -9649,6 +9651,49 @@ def mostrar_panel():
             print(padding + Fore.CYAN + f"🧭 Decisión tick: P_model={p_model*100:.1f}% | P_oper={p_oper*100:.1f}% | Bloqueo principal={principal_txt}")
             print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | CLASSIC={IA_ACTIVACION_REAL_THR*100:.0f}%")
             print(padding + Fore.CYAN + f"📉 Bloqueo dominante ({len(HUD_BLOQUEOS_RECIENTES)} ticks): {top_txt}")
+
+            # Diagnóstico por bot (top-3) para ver exactamente qué compuerta frena.
+            try:
+                global _LAST_HUD_BOT_GATE_DIAG_TS
+                now_dbg = time.time()
+                if (now_dbg - float(_LAST_HUD_BOT_GATE_DIAG_TS or 0.0)) >= float(HUD_BOT_GATE_DIAG_EVERY_S):
+                    _LAST_HUD_BOT_GATE_DIAG_TS = now_dbg
+                    live_diag = []
+                    for b in BOT_NAMES:
+                        pb = estado_bots.get(b, {}).get("prob_ia", None)
+                        if isinstance(pb, (int, float)) and np.isfinite(float(pb)):
+                            live_diag.append((b, float(pb)))
+                    live_diag.sort(key=lambda x: x[1], reverse=True)
+
+                    roof_dbg = float(DYN_ROOF_STATE.get("roof", DYN_ROOF_FLOOR) or DYN_ROOF_FLOOR)
+                    confirm_bot_dbg = DYN_ROOF_STATE.get("confirm_bot")
+                    confirm_st_dbg = int(DYN_ROOF_STATE.get("confirm_streak", 0) or 0)
+                    confirm_need_dbg = int(DYN_ROOF_STATE.get("last_confirm_need", DYN_ROOF_CONFIRM_TICKS) or DYN_ROOF_CONFIRM_TICKS)
+
+                    dbg_chunks = []
+                    for b, pb in live_diag[:3]:
+                        unrel_b = float(_umbral_unrel_operativo(b, pb))
+                        unrel_ok_b = bool(pb >= unrel_b)
+                        roof_ok_b = bool(pb >= roof_dbg)
+                        suceso_ok_b = bool(estado_bots.get(b, {}).get("ia_suceso_ok", False))
+                        clone_b = bool(estado_bots.get(b, {}).get("ia_input_duplicado", False))
+
+                        if b == confirm_bot_dbg:
+                            conf_txt = f"{min(confirm_st_dbg, confirm_need_dbg)}/{confirm_need_dbg}"
+                        else:
+                            conf_txt = f"0/{confirm_need_dbg}"
+
+                        dbg_chunks.append(
+                            f"{b}:{pb*100:.1f}% UNR{'✅' if unrel_ok_b else f'❌({max(0.0,(unrel_b-pb))*100:.1f})'} "
+                            f"ROOF{'✅' if roof_ok_b else f'❌({max(0.0,(roof_dbg-pb))*100:.1f})'} "
+                            f"CONF{conf_txt} SUC{'✅' if suceso_ok_b else '❌'} CLN{'🛑' if clone_b else 'ok'}"
+                        )
+
+                    if dbg_chunks:
+                        print(padding + Fore.CYAN + f"🔬 Gates(top3): {' | '.join(dbg_chunks)}")
+            except Exception:
+                pass
+
             ref_racha = ultimo_bot_real if ultimo_bot_real in BOT_NAMES else "--"
             elegido_tick = mejor[0] if isinstance(mejor, tuple) and len(mejor) >= 1 else "--"
             print(padding + Fore.CYAN + f"🧾 Contexto racha: ref={ref_racha} | elegido_tick={elegido_tick} | token_real={owner_txt}")
