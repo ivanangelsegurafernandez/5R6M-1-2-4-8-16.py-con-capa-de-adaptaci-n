@@ -172,8 +172,8 @@ HUD_VISIBLE = True       # Para ocultarlo con tecla
 
 # --- Objetivos / umbrales globales de IA ---
 IA_OBJETIVO_REAL_THR = 0.70   # objetivo de calidad REAL (meta: 70% aprox)
-IA_ACTIVACION_REAL_THR = 0.85 # mínimo operativo para activar señal REAL
-IA_ACTIVACION_REAL_THR_POST_N15 = 0.75  # al cumplir n mínimo por bot, el umbral operativo baja solo hasta 75%
+IA_ACTIVACION_REAL_THR = 0.70 # mínimo operativo para activar señal REAL (piso inicial solicitado)
+IA_ACTIVACION_REAL_THR_POST_N15 = 0.70  # con piso inicial en 70%, post-n15 mantiene ese mismo piso base
 # En modo unreliable (reliable=false), permitir piso post-n15 más realista para no congelar entradas.
 IA_ACTIVACION_REAL_THR_POST_N15_UNREL = 0.60
 IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES = 300
