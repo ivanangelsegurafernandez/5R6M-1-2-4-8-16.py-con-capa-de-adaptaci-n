@@ -255,6 +255,13 @@ AUTO_REAL_UNREL_LATERAL_ADAPT_ENABLE = True
 AUTO_REAL_UNREL_LATERAL_MIN_N = 50
 AUTO_REAL_UNREL_LATERAL_MIN_WR = 0.50
 AUTO_REAL_UNREL_LATERAL_MIN_PROB = 0.55
+# Micro-relajación gradual del umbral UNREL basada en cierres auditados reales.
+# Solo aplica cuando ya hay muestra suficiente y rendimiento sostenido.
+AUTO_REAL_UNREL_MICRO_RELAX_ENABLE = True
+AUTO_REAL_UNREL_MICRO_RELAX_MIN_CLOSED = 20
+AUTO_REAL_UNREL_MICRO_RELAX_MIN_WINRATE = 0.70
+AUTO_REAL_UNREL_MICRO_RELAX_MAX_DELTA = 0.02
+AUTO_REAL_UNREL_MICRO_RELAX_LOG_COOLDOWN_S = 45.0
 # Bypass controlado: si la compuerta REAL ya está sólida en vivo, permitir AUTO
 # aunque el modelo siga en warmup/reliable=false.
 AUTO_REAL_UNRELIABLE_ALLOW_STRONG_GATE = True
@@ -11185,6 +11192,96 @@ def _smart_clone_override_ok(best_bot: str, p_best: float, p_second: float, clon
         return False
 
 
+_UNREL_MICRO_RELAX_CACHE = {"ts": 0.0, "delta": 0.0, "n": 0, "wr": 0.0, "sig": ""}
+_UNREL_MICRO_RELAX_LOG_TS = 0.0
+
+
+def _calcular_micro_relax_unrel(force: bool = False) -> dict:
+    """Calcula una relajación pequeña y segura del umbral UNREL desde ia_signals_log."""
+    global _UNREL_MICRO_RELAX_CACHE, _UNREL_MICRO_RELAX_LOG_TS
+    out = {"delta": 0.0, "n": 0, "wr": 0.0, "active": False, "why": "off"}
+    try:
+        if not bool(AUTO_REAL_UNREL_MICRO_RELAX_ENABLE):
+            return out
+
+        now = time.time()
+        cache = _UNREL_MICRO_RELAX_CACHE if isinstance(_UNREL_MICRO_RELAX_CACHE, dict) else {}
+        if (not force) and ((now - float(cache.get("ts", 0.0) or 0.0)) <= 20.0):
+            return {
+                "delta": float(cache.get("delta", 0.0) or 0.0),
+                "n": int(cache.get("n", 0) or 0),
+                "wr": float(cache.get("wr", 0.0) or 0.0),
+                "active": bool(float(cache.get("delta", 0.0) or 0.0) > 0.0),
+                "why": str(cache.get("why", "cache") or "cache"),
+            }
+
+        p = Path(IA_SIGNALS_LOG)
+        if not p.exists():
+            out["why"] = "no_log"
+            _UNREL_MICRO_RELAX_CACHE = {"ts": now, **out}
+            return out
+
+        rows = deque(maxlen=1200)
+        with open(p, "r", encoding="utf-8", newline="") as fh:
+            rd = csv.DictReader(fh)
+            for r in rd:
+                rows.append(r)
+        if not rows:
+            out["why"] = "empty"
+            _UNREL_MICRO_RELAX_CACHE = {"ts": now, **out}
+            return out
+
+        # Usar cierres reales con barrera fuerte (thr>=85%) para no relajar por ruido.
+        closed = []
+        for r in rows:
+            try:
+                yv = str(r.get("y", "")).strip()
+                if yv not in {"0", "1"}:
+                    continue
+                thr = float(r.get("thr", 0.0) or 0.0)
+                modo = str(r.get("modo", "")).strip().upper()
+                if thr < 0.85:
+                    continue
+                if modo not in {"ORDEN_REAL", "IA_AUTO", "REAL"}:
+                    continue
+                closed.append((int(yv), thr))
+            except Exception:
+                continue
+
+        n = len(closed)
+        if n < int(AUTO_REAL_UNREL_MICRO_RELAX_MIN_CLOSED):
+            out.update({"n": n, "why": "n_low"})
+            _UNREL_MICRO_RELAX_CACHE = {"ts": now, **out}
+            return out
+
+        wins = sum(y for y, _thr in closed)
+        wr = float(wins / max(1, n))
+        if wr < float(AUTO_REAL_UNREL_MICRO_RELAX_MIN_WINRATE):
+            out.update({"n": n, "wr": wr, "why": "wr_low"})
+            _UNREL_MICRO_RELAX_CACHE = {"ts": now, **out}
+            return out
+
+        # Delta gradual por muestra + calidad, acotado por MAX_DELTA.
+        wr_excess = max(0.0, wr - float(AUTO_REAL_UNREL_MICRO_RELAX_MIN_WINRATE))
+        wr_gain = min(1.0, wr_excess / 0.20)
+        n_gain = min(1.0, float(n) / 80.0)
+        delta = float(min(float(AUTO_REAL_UNREL_MICRO_RELAX_MAX_DELTA), float(AUTO_REAL_UNREL_MICRO_RELAX_MAX_DELTA) * wr_gain * n_gain))
+
+        out.update({"delta": delta, "n": n, "wr": wr, "active": bool(delta > 0.0), "why": "ok" if delta > 0.0 else "flat"})
+        _UNREL_MICRO_RELAX_CACHE = {"ts": now, **out}
+
+        if out["active"] and ((now - float(_UNREL_MICRO_RELAX_LOG_TS or 0.0)) >= float(AUTO_REAL_UNREL_MICRO_RELAX_LOG_COOLDOWN_S)):
+            _UNREL_MICRO_RELAX_LOG_TS = now
+            try:
+                agregar_evento(f"🧪 UNREL micro-relax activo: -{delta*100:.1f}pp (n={n}, wr={wr*100:.1f}%).")
+            except Exception:
+                pass
+
+        return out
+    except Exception:
+        return out
+
+
 def _umbral_unrel_operativo(best_bot: str | None, best_prob: float | None = None) -> float:
     """
     Umbral UNREL operativo con 2 capas:
@@ -11196,6 +11293,8 @@ def _umbral_unrel_operativo(best_bot: str | None, best_prob: float | None = None
     """
     try:
         base = float(AUTO_REAL_UNRELIABLE_MIN_PROB)
+        mr = _calcular_micro_relax_unrel(force=False)
+        base = float(max(0.55, base - float(mr.get("delta", 0.0) or 0.0)))
         if not bool(AUTO_REAL_UNREL_LATERAL_ADAPT_ENABLE):
             return base
         if not isinstance(best_bot, str) or (best_bot not in BOT_NAMES):
