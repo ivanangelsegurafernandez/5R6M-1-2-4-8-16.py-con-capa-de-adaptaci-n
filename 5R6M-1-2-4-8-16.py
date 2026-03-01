@@ -9700,6 +9700,10 @@ RENDER_LOCK = threading.Lock()
 RUNTIME_AUDIT_LOG_PATH = "runtime_log_ia.txt"
 RUNTIME_AUDIT_ENABLE = True
 
+# HUD observabilidad de rachas (solo diagnóstico; no altera trading/gates).
+HUD_RACHA_WINDOWS = (5, 8, 12)
+HUD_RACHA_MIN_MUESTRA = 8
+
 def _runtime_audit_append(linea: str):
     try:
         if not bool(RUNTIME_AUDIT_ENABLE):
@@ -9719,6 +9723,99 @@ def agregar_evento(texto: str):
 
 def limpiar_consola():
     os.system("cls" if os.name == "nt" else "clear")
+
+def _es_verde_resultado(x):
+    return str(x or "").strip().upper() == "GANANCIA"
+
+def _es_rojo_resultado(x):
+    return str(x or "").strip().upper() == "PÉRDIDA"
+
+def _racha_actual_color(resultados):
+    r = list(resultados or [])
+    largo = 0
+    color = "N"
+    for x in reversed(r):
+        if _es_verde_resultado(x):
+            if color in ("N", "V"):
+                color = "V"
+                largo += 1
+            else:
+                break
+        elif _es_rojo_resultado(x):
+            if color in ("N", "R"):
+                color = "R"
+                largo += 1
+            else:
+                break
+        else:
+            if largo > 0:
+                break
+    return color, int(largo)
+
+def _densidad_verde(resultados, ventana=8):
+    rr = [x for x in list(resultados or []) if _es_verde_resultado(x) or _es_rojo_resultado(x)]
+    if not rr:
+        return 0.0
+    w = max(1, min(int(ventana), len(rr)))
+    tail = rr[-w:]
+    return float(sum(1 for x in tail if _es_verde_resultado(x))) / float(max(1, len(tail)))
+
+def _compactacion_verde(resultados, ventana=12):
+    rr = [x for x in list(resultados or []) if _es_verde_resultado(x) or _es_rojo_resultado(x)]
+    if len(rr) < 2:
+        return 0.0
+    w = max(2, min(int(ventana), len(rr)))
+    tail = rr[-w:]
+    pos = [i for i, x in enumerate(tail) if _es_verde_resultado(x)]
+    if len(pos) <= 1:
+        return 0.0
+    ady = sum(1 for i in range(1, len(pos)) if pos[i] == pos[i - 1] + 1)
+    return float(ady) / float(max(1, len(pos) - 1))
+
+def _persistencia_racha_verde(resultados):
+    rr = [x for x in list(resultados or []) if _es_verde_resultado(x) or _es_rojo_resultado(x)]
+    if len(rr) < 4:
+        return None, None
+    c2 = c3 = c4 = 0
+    run = 0
+    for x in rr:
+        if _es_verde_resultado(x):
+            run += 1
+            if run == 2:
+                c2 += 1
+            elif run == 3:
+                c3 += 1
+            elif run == 4:
+                c4 += 1
+        else:
+            run = 0
+    p23 = (float(c3) / float(c2)) if c2 > 0 else None
+    p34 = (float(c4) / float(c3)) if c3 > 0 else None
+    return p23, p34
+
+def _clasificar_regimen_racha(resultados):
+    rr = [x for x in list(resultados or []) if _es_verde_resultado(x) or _es_rojo_resultado(x)]
+    if len(rr) < HUD_RACHA_MIN_MUESTRA:
+        return "R0"
+    d5 = _densidad_verde(rr, 5)
+    d8 = _densidad_verde(rr, 8)
+    d12 = _densidad_verde(rr, 12)
+    acel = d5 - d12
+    color, largo = _racha_actual_color(rr)
+    comp = _compactacion_verde(rr, 12)
+    if color == "V" and largo >= 3 and d8 >= 0.55 and comp >= 0.45 and acel >= -0.05:
+        return "R2"
+    if acel >= 0.15 and d5 >= 0.45:
+        return "R1"
+    return "R0"
+
+def _fmt_prob_pct(p):
+    if p is None:
+        return "--"
+    try:
+        return f"{float(p)*100:.0f}%"
+    except Exception:
+        return "--"
 
 # Mostrar panel
 def mostrar_panel():
@@ -10093,6 +10190,35 @@ def mostrar_panel():
             ref_racha = ultimo_bot_real if ultimo_bot_real in BOT_NAMES else "--"
             elegido_tick = mejor[0] if isinstance(mejor, tuple) and len(mejor) >= 1 else "--"
             print(padding + Fore.CYAN + f"🧾 Contexto racha: ref={ref_racha} | elegido_tick={elegido_tick} | token_real={owner_txt}")
+        except Exception:
+            pass
+
+        # Diagnóstico de rachas por bot: detecta transición/continuidad sin usarlo como señal directa.
+        try:
+            resumen_racha = []
+            score_racha = []
+            for b in BOT_NAMES:
+                rr = estado_bots.get(b, {}).get("resultados", [])
+                reg = _clasificar_regimen_racha(rr)
+                col, lar = _racha_actual_color(rr)
+                p23, p34 = _persistencia_racha_verde(rr)
+                d8 = _densidad_verde(rr, 8)
+                d12 = _densidad_verde(rr, 12)
+                acel = d8 - d12
+                lbl = ("V" if col == "V" else ("R" if col == "R" else "N"))
+                resumen_racha.append(f"{b}:{reg} {lbl}{lar} P23={_fmt_prob_pct(p23)} P34={_fmt_prob_pct(p34)}")
+                score = (1.8 if reg == "R2" else 1.0 if reg == "R1" else 0.0) + max(0.0, acel) + max(0.0, d8 - 0.5)
+                score_racha.append((b, score, reg, lar, acel))
+
+            if resumen_racha:
+                print(padding + Fore.CYAN + "🧩 Régimen racha (obs): " + " | ".join(resumen_racha[:3]))
+                if len(resumen_racha) > 3:
+                    print(padding + Fore.CYAN + "                          " + " | ".join(resumen_racha[3:]))
+
+            if score_racha:
+                score_racha.sort(key=lambda t: t[1], reverse=True)
+                b0, _, reg0, lar0, acel0 = score_racha[0]
+                print(padding + Fore.MAGENTA + f"🎯 Oportunidad racha (obs): {b0} {reg0} V{lar0 if lar0 > 0 else 0} Δdens={acel0:+.2f} (solo contexto)")
         except Exception:
             pass
 
