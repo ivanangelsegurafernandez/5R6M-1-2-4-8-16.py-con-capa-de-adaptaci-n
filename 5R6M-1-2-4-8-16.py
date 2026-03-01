@@ -10015,6 +10015,9 @@ def mostrar_panel():
             # ===== HUD DIAGNÓSTICO RÁPIDO (solo visual, no cambia lógica) =====
             roof_h = float(DYN_ROOF_STATE.get("roof", DYN_ROOF_FLOOR) or DYN_ROOF_FLOOR)
             floor_h = float(DYN_ROOF_STATE.get("last_floor_eff", _umbral_real_operativo_actual()) or _umbral_real_operativo_actual())
+            floor_gate_h = float(DYN_ROOF_STATE.get("last_floor_gate", floor_h) or floor_h)
+            live_peak_h = float(DYN_ROOF_STATE.get("last_live_peak", 0.0) or 0.0)
+            live_peak_n_h = len(DYN_ROOF_STATE.get("live_peak_hist", []) or [])
             obs_ok = bool(best_prob >= float(umbral_obs))
             unrel_ok = bool(best_prob >= float(unrel_thr_live))
             roof_ok = bool(best_prob >= float(roof_h))
@@ -10078,7 +10081,7 @@ def mostrar_panel():
             decision_line = f"🧭 Decisión tick: P_model={p_model*100:.1f}% | P_oper={p_oper*100:.1f}% | Bloqueo principal={principal_txt}"
             print(padding + Fore.CYAN + decision_line)
             _runtime_audit_append(decision_line)
-            print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | CLASSIC={IA_ACTIVACION_REAL_THR*100:.0f}%")
+            print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | B-GATE={floor_gate_h*100:.1f}% | LIVE_MAX={live_peak_h*100:.1f}% (n={live_peak_n_h}) | CLASSIC={IA_ACTIVACION_REAL_THR*100:.0f}%")
             bloqueos_line = f"📉 Bloqueo dominante ({len(HUD_BLOQUEOS_RECIENTES)} ticks): {top_txt}"
             print(padding + Fore.CYAN + bloqueos_line)
             _runtime_audit_append(bloqueos_line)
@@ -11496,6 +11499,10 @@ DYN_ROOF_MODE_C_FLOOR = 0.70
 DYN_ROOF_MODE_C_CONFIRM_TICKS = 3
 DYN_ROOF_MODE_C_MIN_EVIDENCE_N = 20
 DYN_ROOF_MODE_C_MIN_EVIDENCE_LB = 0.60
+# Techo vivo del mercado (ticks HUD): evita perseguir picos históricos irreales.
+DYN_ROOF_LIVE_PEAK_WINDOW = 120
+DYN_ROOF_LIVE_PEAK_MIN_SAMPLES = 20
+DYN_ROOF_LIVE_PEAK_MARGIN = 0.01
 REAL_COOLDOWN_UNTIL_TS = 0.0
 LAST_RETRAIN_ERROR = ""
 
@@ -11514,6 +11521,9 @@ DYN_ROOF_STATE = {
     "crowd_count": 0,
     "last_low_balance_warn_ts": 0.0,
     "last_p_best": 0.0,
+    "last_live_peak": 0.0,
+    "last_floor_gate": float(max(DYN_ROOF_FLOOR, IA_OBJETIVO_REAL_THR)),
+    "live_peak_hist": deque(maxlen=int(DYN_ROOF_LIVE_PEAK_WINDOW)),
     "prev_probs": {},
     "last_real_open_ts": 0.0,
 }
@@ -11897,6 +11907,14 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
         probs_live = [float(x[1]) for x in live]
         spread_std = float(np.std(probs_live)) if probs_live else 0.0
 
+        live_peak_hist = DYN_ROOF_STATE.get("live_peak_hist")
+        if not isinstance(live_peak_hist, deque):
+            live_peak_hist = deque(maxlen=int(DYN_ROOF_LIVE_PEAK_WINDOW))
+        live_peak_hist.append(float(p_best))
+        DYN_ROOF_STATE["live_peak_hist"] = live_peak_hist
+        live_peak = float(max(live_peak_hist)) if len(live_peak_hist) > 0 else float(p_best)
+        enough_live_peak = bool(len(live_peak_hist) >= int(DYN_ROOF_LIVE_PEAK_MIN_SAMPLES))
+
         prev_floor = DYN_ROOF_STATE.get("last_floor", None)
         if not isinstance(prev_floor, (int, float)) or abs(float(prev_floor) - float(floor_now)) > 1e-12:
             DYN_ROOF_STATE["roof"] = float(floor_now)
@@ -11970,18 +11988,20 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
         gate_mode = "C" if mode_c_active else ("B" if modo_relajado_n15 else "A")
         floor_eff = float(DYN_ROOF_MODE_C_FLOOR) if mode_c_active else float(floor_now)
 
-        # En modo relajado (n>=15 en todos): entrar con piso post-n15 sin depender del roof.
+        # En modo relajado (n>=15 en todos): usar piso dinámico basado en el
+        # mayor p_best reciente (techo vivo) con margen y candados de GAP/confirm.
+        floor_gate_live = float(floor_eff if mode_c_active else floor_now)
+        if modo_relajado_n15 and (not mode_c_active) and enough_live_peak:
+            floor_gate_live = float(max(floor_gate_live, live_peak - float(DYN_ROOF_LIVE_PEAK_MARGIN)))
+
         if modo_relajado_n15:
-            floor_gate = floor_eff if mode_c_active else floor_now
-            pass_gate = bool((float(p_best) >= float(floor_now)) and bool(gap_ok))
+            pass_gate = bool((float(p_best) >= float(floor_gate_live)) and bool(gap_ok))
         else:
             pass_gate = (
                 (float(p_best) >= float(roof_eff))
                 and (float(p_best) >= float(floor_eff))
                 and bool(gap_ok)
             )
-        if modo_relajado_n15:
-            pass_gate = bool((float(p_best) >= float(floor_gate)) and bool(gap_ok))
 
         if mode_c_active:
             ev = _evidencia_bot_umbral_objetivo(best_bot)
@@ -12078,6 +12098,8 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
         DYN_ROOF_STATE["gate_rearm_streak"] = int(rearm_streak)
         DYN_ROOF_STATE["crowd_count"] = int(crowd_count)
         DYN_ROOF_STATE["last_p_best"] = float(p_best)
+        DYN_ROOF_STATE["last_live_peak"] = float(live_peak)
+        DYN_ROOF_STATE["last_floor_gate"] = float(floor_gate_live)
         DYN_ROOF_STATE["last_gate_mode"] = str(gate_mode)
         DYN_ROOF_STATE["last_floor_eff"] = float(floor_eff)
         DYN_ROOF_STATE["last_confirm_need"] = int(confirm_need)
@@ -12107,6 +12129,9 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
             "gate_mode": str(gate_mode),
             "stall_s": float(stall_s),
             "floor_eff": float(floor_eff),
+            "floor_gate": float(floor_gate_live),
+            "live_peak": float(live_peak),
+            "live_peak_n": int(len(live_peak_hist)),
             "confirm_need": int(confirm_need),
             "clone_flat": bool(clone_flat),
             "smart_clone_override": bool(smart_clone_override),
