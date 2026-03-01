@@ -9587,6 +9587,15 @@ def mostrar_panel():
             p_pre_best = None
             try:
                 bb = dyn_gate.get("best_bot") if isinstance(dyn_gate, dict) else None
+                if not (isinstance(bb, str) and bb in estado_bots):
+                    live_best = []
+                    for bname in BOT_NAMES:
+                        stx = estado_bots.get(bname, {})
+                        px = stx.get("prob_ia", None)
+                        if bool(stx.get("ia_ready", False)) and isinstance(px, (int, float)) and np.isfinite(float(px)):
+                            live_best.append((float(px), bname))
+                    if live_best:
+                        bb = max(live_best, key=lambda t: t[0])[1]
                 if isinstance(bb, str) and bb in estado_bots:
                     stbb = estado_bots.get(bb, {})
                     pr = stbb.get("ia_prob_raw_model", None)
@@ -9603,6 +9612,8 @@ def mostrar_panel():
                     pp = stbb.get("ia_prob_pre_cap", None)
                     if isinstance(pp, (int, float)) and np.isfinite(float(pp)):
                         p_pre_best = float(pp)
+                    elif isinstance(stbb.get("prob_ia", None), (int, float)) and np.isfinite(float(stbb.get("prob_ia", None))):
+                        p_pre_best = float(stbb.get("prob_ia", None))
             except Exception:
                 p_raw_best = None
                 p_pre_best = None
@@ -9614,7 +9625,7 @@ def mostrar_panel():
                 + Fore.YELLOW
                 + f"🧩 WHY-NO: CAP≈{cap_now*100:.1f}% (warmup={'sí' if warmup_live else 'no'}) | "
                   f"AUTO={auto_state} reliable={'sí' if reliable else 'no'} canary={'sí' if canary_live else 'no'} n={n_samples_live} p_raw={p_raw_txt} p_pre={p_pre_txt} p_cap={best_prob*100:.1f}% why={why_txt} | canary_prog={canary_prog_txt} hit={c_hit:.1f}% | "
-                  f"ROOF mode={mode_h} confirm={confirm_txt_h} trigger_ok={'sí' if trigger_ok_h else 'no'} gate_consumed={'sí' if clone_gate else 'no'}"
+                  f"ROOF mode={mode_h} confirm={confirm_txt_h} trigger_ok={'sí' if trigger_ok_h else 'no'} trig_force={'sí' if bool((dyn_gate or {}).get('trigger_force', False)) else 'no'} gate_consumed={'sí' if clone_gate else 'no'}"
             )
 
             # ===== HUD DIAGNÓSTICO RÁPIDO (solo visual, no cambia lógica) =====
@@ -10976,6 +10987,8 @@ DYN_ROOF_FLOOR = 0.70
 DYN_ROOF_GAP = 0.03
 # Confirmación mínima (ticks consecutivos del MISMO bot)
 DYN_ROOF_CONFIRM_TICKS = 2
+DYN_ROOF_TRIGGER_FORCE_STREAK = 4
+DYN_ROOF_TRIGGER_FORCE_MARGIN = 0.005
 # Tolerancia para considerar "tocado" el techo (near-roof)
 DYN_ROOF_NEAR_TOL = 0.005
 # Penalización por evidencia corta (n < 30): requiere +2pp al techo
@@ -11459,10 +11472,16 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
         # - Modo B (post-n15): si ya hubo confirmación sostenida, usar suceso_ok
         #   para no quedar "pegado" cuando p_best orbita el mismo nivel sin nuevo cruce.
         # - Modo C: mantiene criterio conservador basado en suceso_ok + evidencia.
+        trigger_force = bool(
+            modo_relajado_n15
+            and (int(confirm_streak) >= int(max(confirm_need, DYN_ROOF_TRIGGER_FORCE_STREAK)))
+            and (float(p_best) >= float(floor_eff - DYN_ROOF_TRIGGER_FORCE_MARGIN))
+        )
+
         if mode_c_active:
             trigger_ok = bool(suceso_ok)
         elif modo_relajado_n15:
-            trigger_ok = bool(suceso_ok or crossed_up)
+            trigger_ok = bool(suceso_ok or crossed_up or trigger_force)
         else:
             trigger_ok = bool(crossed_up)
         if warmup_mode and (not mode_c_active):
@@ -11512,6 +11531,7 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
             "crossed_up": bool(crossed_up),
             "suceso_ok": bool(suceso_ok),
             "trigger_ok": bool(trigger_ok),
+            "trigger_force": bool(trigger_force),
             "gate_mode": str(gate_mode),
             "stall_s": float(stall_s),
             "floor_eff": float(floor_eff),
