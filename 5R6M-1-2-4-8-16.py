@@ -230,6 +230,24 @@ IA_OVERCONF_MIN_N = 20
 IA_OVERCONF_GAP_MAX_PP = 0.15
 IA_OVERCONF_DYNAMIC_CAP = 0.90
 IA_CHECKPOINT_CLOSED_STEP = 20
+# Guardrail duro de salud IA (global+por bot): evita sobreconfianza con muestra inmadura.
+IA_HARD_GUARD_ENABLE = True
+IA_HARD_GUARD_RED_MIN_CLOSED = 20
+IA_HARD_GUARD_AMBER_MIN_CLOSED = 80
+IA_HARD_GUARD_RED_MIN_AUC = 0.52
+IA_HARD_GUARD_GREEN_MIN_AUC = 0.55
+IA_HARD_GUARD_MIN_FEATURES_RED = 5
+IA_HARD_GUARD_MIN_FEATURES_GREEN = 6
+IA_HARD_GUARD_RED_CAP = 0.58
+IA_HARD_GUARD_AMBER_CAP = 0.66
+IA_HARD_GUARD_SEVERE_GAP_MIN_N = 10
+IA_HARD_GUARD_SEVERE_OVERCONF_GAP_PP = 0.25
+IA_HARD_GUARD_AMBER_OVERCONF_GAP_PP = 0.15
+IA_HARD_GUARD_GREEN_MAX_GAP_PP = 0.10
+IA_HARD_GUARD_HYSTERESIS_S = 180.0
+IA_HARD_GUARD_LOG_COOLDOWN_S = 45.0
+IA_HARD_GUARD_BOT_MIN_N = 10
+IA_HARD_GUARD_BOT_GAP_PP = 0.18
 # Impulso por racha reciente (micro-ajuste dinámico para evitar Prob IA plana).
 IA_RACHA_BOOST_ENABLE = True
 IA_RACHA_BOOST_WINDOW = 8
@@ -3387,6 +3405,9 @@ def _safe_read_csv_any_encoding(path: str) -> pd.DataFrame | None:
 
 _IA_RUNTIME_CAL_CACHE = {"ts": 0.0, "base_rate": 0.5, "n70": 0}
 _IA_OVERCONF_CACHE = {"ts": 0.0, "active": False, "cap": 1.0, "n": 0, "gap_pp": 0.0}
+_IA_HARD_GUARD_CACHE = {"ts": 0.0, "active": False, "cap": 1.0, "level": "GREEN", "closed": 0, "auc": 0.0, "reliable": False, "features": 0, "reasons": [], "until": 0.0}
+_IA_HARD_GUARD_BOT_CACHE = {"ts": 0.0, "data": {}}
+_IA_HARD_GUARD_LOG_TS = 0.0
 _IA_CHECKPOINT_CACHE = {"last_closed": 0, "last_ts": 0.0}
 _IA_BOT45_TRACE_CACHE = {"ts": 0.0, "msg": ""}
 _GATE_ACTIVO_CACHE = {}
@@ -4049,6 +4070,233 @@ def _get_overconf_guardrail_state(force: bool = False, ttl_s: float = 15.0) -> d
         return dict(out)
     except Exception:
         return dict(_IA_OVERCONF_CACHE)
+
+
+def _estado_guardrail_ia_fuerte(force: bool = False, ttl_s: float = 20.0) -> dict:
+    """Guardrail global por niveles (RED/AMBER/GREEN) con histéresis para evitar parpadeos."""
+    global _IA_HARD_GUARD_CACHE, _IA_HARD_GUARD_LOG_TS
+    now = time.time()
+    out = {
+        "ts": now,
+        "active": False,
+        "cap": 1.0,
+        "level": "GREEN",
+        "closed": 0,
+        "auc": 0.0,
+        "reliable": False,
+        "features": 0,
+        "reasons": [],
+        "until": 0.0,
+    }
+    try:
+        if not bool(IA_HARD_GUARD_ENABLE):
+            _IA_HARD_GUARD_CACHE = dict(out)
+            return out
+
+        cache = _IA_HARD_GUARD_CACHE if isinstance(_IA_HARD_GUARD_CACHE, dict) else {}
+        if (not force) and ((now - float(cache.get("ts", 0.0) or 0.0)) <= float(ttl_s)):
+            return dict(cache)
+
+        meta = _ORACLE_CACHE.get("meta") or leer_model_meta() or {}
+        auc = float(meta.get("auc", 0.0) or 0.0)
+        reliable = bool(meta.get("reliable", False))
+        feats = meta.get("feature_names", [])
+        feat_count = len(feats) if isinstance(feats, list) else 0
+
+        rep_all = auditar_calibracion_seniales_reales(min_prob=float(IA_CALIB_THRESHOLD)) or {}
+        closed = int(rep_all.get("n_total_closed", rep_all.get("n", 0)) or 0)
+
+        rep90 = auditar_calibracion_seniales_reales(min_prob=float(IA_OVERCONF_BUCKET_MIN_PROB)) or {}
+        n90 = int(rep90.get("n", 0) or 0)
+        avg90 = rep90.get("avg_pred", None)
+        wr90 = rep90.get("win_rate", None)
+        gap90 = 0.0
+        if isinstance(avg90, (int, float)) and isinstance(wr90, (int, float)):
+            gap90 = float(avg90) - float(wr90)
+
+        severe_gap = bool((n90 >= int(IA_HARD_GUARD_SEVERE_GAP_MIN_N)) and (gap90 >= float(IA_HARD_GUARD_SEVERE_OVERCONF_GAP_PP)))
+        amber_gap = bool((n90 >= int(IA_HARD_GUARD_SEVERE_GAP_MIN_N)) and (gap90 >= float(IA_HARD_GUARD_AMBER_OVERCONF_GAP_PP)))
+
+        reasons = []
+        if closed < int(IA_HARD_GUARD_RED_MIN_CLOSED):
+            reasons.append(f"HG:CLOSED<{int(IA_HARD_GUARD_RED_MIN_CLOSED)}")
+        if auc < float(IA_HARD_GUARD_RED_MIN_AUC):
+            reasons.append(f"HG:AUC<{float(IA_HARD_GUARD_RED_MIN_AUC):.2f}")
+        if not reliable:
+            reasons.append("HG:REL=false")
+        if feat_count > 0 and feat_count < int(IA_HARD_GUARD_MIN_FEATURES_RED):
+            reasons.append(f"HG:FEATS<{int(IA_HARD_GUARD_MIN_FEATURES_RED)}")
+        if severe_gap:
+            reasons.append(f"HG:GAP90>={float(IA_HARD_GUARD_SEVERE_OVERCONF_GAP_PP)*100:.0f}pp")
+
+        level = "GREEN"
+        cap = 1.0
+        hard_block = False
+
+        red_cond = bool(
+            (closed < int(IA_HARD_GUARD_RED_MIN_CLOSED))
+            or (not reliable)
+            or (auc < float(IA_HARD_GUARD_RED_MIN_AUC))
+            or (feat_count > 0 and feat_count < int(IA_HARD_GUARD_MIN_FEATURES_RED))
+            or severe_gap
+        )
+        amber_cond = bool(
+            (closed < int(IA_HARD_GUARD_AMBER_MIN_CLOSED))
+            or amber_gap
+        )
+        green_cond = bool(
+            (closed >= int(IA_HARD_GUARD_AMBER_MIN_CLOSED))
+            and reliable
+            and (auc >= float(IA_HARD_GUARD_GREEN_MIN_AUC))
+            and (feat_count >= int(IA_HARD_GUARD_MIN_FEATURES_GREEN))
+            and ((n90 < int(IA_HARD_GUARD_SEVERE_GAP_MIN_N)) or (gap90 < float(IA_HARD_GUARD_GREEN_MAX_GAP_PP)))
+        )
+
+        if red_cond:
+            level = "RED"
+            cap = float(IA_HARD_GUARD_RED_CAP)
+            hard_block = True
+        elif amber_cond and (not green_cond):
+            level = "AMBER"
+            cap = float(IA_HARD_GUARD_AMBER_CAP)
+            if amber_gap:
+                reasons.append(f"HG:GAP90>={float(IA_HARD_GUARD_AMBER_OVERCONF_GAP_PP)*100:.0f}pp")
+        else:
+            level = "GREEN"
+            cap = 1.0
+
+        # Histéresis: una vez activo, mantener hasta que venza la ventana o se fuerce.
+        prev_level = str(cache.get("level", "GREEN") or "GREEN").upper()
+        prev_until = float(cache.get("until", 0.0) or 0.0)
+        if (not force) and (prev_level in {"RED", "AMBER"}) and (now < prev_until) and (level == "GREEN"):
+            level = prev_level
+            cap = float(cache.get("cap", IA_HARD_GUARD_AMBER_CAP) or IA_HARD_GUARD_AMBER_CAP)
+            hard_block = bool(level == "RED")
+            reasons = list(cache.get("reasons", []) or ["HG:HOLD"])
+
+        until_ts = now + float(IA_HARD_GUARD_HYSTERESIS_S) if level in {"RED", "AMBER"} else 0.0
+
+        out.update({
+            "active": bool(level in {"RED", "AMBER"}),
+            "cap": float(max(0.0, min(1.0, cap))),
+            "level": str(level),
+            "closed": int(closed),
+            "auc": float(auc),
+            "reliable": bool(reliable),
+            "features": int(feat_count),
+            "reasons": list(dict.fromkeys(reasons)),
+            "until": float(until_ts),
+            "hard_block": bool(hard_block),
+            "n90": int(n90),
+            "gap90_pp": float(gap90 * 100.0),
+        })
+        _IA_HARD_GUARD_CACHE = dict(out)
+
+        if out["active"] and ((now - float(_IA_HARD_GUARD_LOG_TS or 0.0)) >= float(IA_HARD_GUARD_LOG_COOLDOWN_S)):
+            _IA_HARD_GUARD_LOG_TS = now
+            try:
+                _ag_evt(
+                    f"🧱 IA hard-guard {out['level']}: cap_oper<={out['cap']*100:.1f}% "
+                    f"(closed={out['closed']}, auc={out['auc']:.3f}, feats={out['features']}, why={','.join(out['reasons'])})."
+                )
+            except Exception:
+                pass
+
+        return dict(out)
+    except Exception:
+        return dict(_IA_HARD_GUARD_CACHE if isinstance(_IA_HARD_GUARD_CACHE, dict) else out)
+
+
+def _estado_guardrail_ia_bot(bot: str, force: bool = False, ttl_s: float = 25.0) -> dict:
+    """Penalización por bot cuando su historial de falsas altas sugiere sobreconfianza local."""
+    global _IA_HARD_GUARD_BOT_CACHE
+    now = time.time()
+    out = {"active": False, "cap": 1.0, "reasons": [], "n": 0, "gap_pp": 0.0}
+    try:
+        cache = _IA_HARD_GUARD_BOT_CACHE if isinstance(_IA_HARD_GUARD_BOT_CACHE, dict) else {}
+        if (not force) and ((now - float(cache.get("ts", 0.0) or 0.0)) <= float(ttl_s)):
+            data = cache.get("data", {}) if isinstance(cache.get("data", {}), dict) else {}
+            if isinstance(data.get(str(bot)), dict):
+                return dict(data.get(str(bot)))
+            return out
+
+        rows = _safe_read_csv_any_encoding(IA_SIGNALS_LOG)
+        data = {}
+        if rows is not None and (not rows.empty) and {"bot", "prob", "y"}.issubset(rows.columns):
+            d = rows.copy()
+            d["prob"] = pd.to_numeric(d["prob"], errors="coerce")
+            y_num = pd.to_numeric(d["y"], errors="coerce")
+            y_txt = d["y"].astype(str).str.strip().str.upper()
+            y_num = y_num.where(
+                ~y_num.isna(),
+                np.where(y_txt.str.contains(r"GAN|WIN|✓"), 1.0, np.where(y_txt.str.contains(r"PERD|PÉRD|LOSS|✗"), 0.0, np.nan))
+            )
+            d["y"] = np.where(pd.isna(y_num), np.nan, np.where(y_num >= 0.5, 1, 0))
+            d = d[d["y"].isin([0, 1])].copy()
+            d["bot"] = d["bot"].astype(str).str.strip()
+
+            for b, gb in d.groupby("bot"):
+                gb2 = gb[gb["prob"] >= float(IA_OVERCONF_BUCKET_MIN_PROB)].copy()
+                n = int(len(gb2))
+                if n <= 0:
+                    data[str(b)] = dict(out)
+                    continue
+                pred = float(gb2["prob"].mean())
+                wr = float(gb2["y"].mean())
+                gap = float(pred - wr)
+                active = bool((n >= int(IA_HARD_GUARD_BOT_MIN_N)) and (gap >= float(IA_HARD_GUARD_BOT_GAP_PP)))
+                cap = 1.0
+                reasons = []
+                if active:
+                    cap = float(min(0.72, 1.0 - min(0.20, gap * 0.35)))
+                    reasons = [f"HG:{str(b).upper()}:GAP90={gap*100.0:.1f}pp"]
+                data[str(b)] = {
+                    "active": bool(active),
+                    "cap": float(max(0.0, min(1.0, cap))),
+                    "reasons": reasons,
+                    "n": int(n),
+                    "gap_pp": float(gap * 100.0),
+                }
+
+        _IA_HARD_GUARD_BOT_CACHE = {"ts": now, "data": data}
+        if isinstance(data.get(str(bot)), dict):
+            return dict(data.get(str(bot)))
+        return out
+    except Exception:
+        return out
+
+
+def _cap_prob_por_guardrail_ia_fuerte(prob: float | None, bot: str | None = None) -> float | None:
+    """Cap solo operativa: no altera p_raw/p_pre diagnósticas, solo p_oper para auto/real."""
+    try:
+        if not isinstance(prob, (int, float)):
+            return prob
+        p = max(0.0, min(1.0, float(prob)))
+        st = _estado_guardrail_ia_fuerte(force=False)
+        cap = 1.0
+        if bool(st.get("active", False)):
+            cap = float(min(cap, float(st.get("cap", 1.0) or 1.0)))
+        if isinstance(bot, str) and bot:
+            sb = _estado_guardrail_ia_bot(bot, force=False)
+            if bool(sb.get("active", False)):
+                cap = float(min(cap, float(sb.get("cap", 1.0) or 1.0)))
+        return float(min(p, max(0.0, min(1.0, cap))))
+    except Exception:
+        return prob
+
+
+def _prob_ia_operativa_bot(bot: str, default: float | None = None) -> float | None:
+    try:
+        st = estado_bots.get(bot, {}) if isinstance(estado_bots, dict) else {}
+        p_oper = st.get("prob_ia_oper", None)
+        if isinstance(p_oper, (int, float)) and np.isfinite(float(p_oper)):
+            return float(p_oper)
+        p = st.get("prob_ia", default)
+        if isinstance(p, (int, float)) and np.isfinite(float(p)):
+            return float(p)
+        return default
+    except Exception:
+        return default
 
 
 def _maybe_emit_calibration_checkpoint(force: bool = False) -> None:
@@ -5507,6 +5755,7 @@ def actualizar_prob_ia_bot(bot: str):
             estado_bots[bot]["ia_prob_senal"] = None
             # Evita mostrar probabilidad stale (ej. 32.4% clonada) cuando la entrada es inválida.
             estado_bots[bot]["prob_ia"] = None
+            estado_bots[bot]["prob_ia_oper"] = None
             return
 
         p, err = predecir_prob_ia_bot(bot)
@@ -5520,9 +5769,13 @@ def actualizar_prob_ia_bot(bot: str):
                 estado_bots[bot]["ia_prob_pre_cap"] = float(max(0.0, min(1.0, float(p))))
             except Exception:
                 pass
-            p = _cap_prob_por_madurez(float(p), bot=bot)
-            p = _cap_prob_por_sobreconfianza(float(p))
-            estado_bots[bot]["prob_ia"] = float(p)
+            p_diag = float(max(0.0, min(1.0, float(p))))
+            p_oper = _cap_prob_por_madurez(float(p_diag), bot=bot)
+            p_oper = _cap_prob_por_sobreconfianza(float(p_oper))
+            p_oper = _cap_prob_por_guardrail_ia_fuerte(float(p_oper), bot=bot)
+            # prob_ia = lectura diagnóstica visible (sin hard-cap); prob_ia_oper = valor operativo para AUTO/REAL.
+            estado_bots[bot]["prob_ia"] = float(p_diag)
+            estado_bots[bot]["prob_ia_oper"] = float(p_oper)
             estado_bots[bot]["ia_ready"] = True
             estado_bots[bot]["ia_last_err"] = None
             estado_bots[bot]["ia_last_prob_ts"] = now
@@ -6043,7 +6296,7 @@ def get_umbral_real_calibrado(force: bool = False) -> float:
             try:
                 if not ia_prob_valida(b, max_age_s=12.0):
                     continue
-                p = float(estado_bots.get(b, {}).get("prob_ia", 0.0) or 0.0)
+                p = float(_prob_ia_operativa_bot(b, default=0.0) or 0.0)
                 if np.isfinite(p) and 0.0 <= p <= 1.0:
                     live_probs.append(p)
             except Exception:
@@ -6333,7 +6586,7 @@ def reiniciar_completo(borrar_csv=False, limpiar_visual_segundos=15, modo_suave=
         estado_bots[bot].update({
             "token": "DEMO",
             "trigger_real": False,
-            "prob_ia": 0.0,
+            "prob_ia": 0.0, "prob_ia_oper": 0.0,
             "ia_ready": False,
             "ciclo_actual": 1,
             "modo_real_anunciado": False,
@@ -6395,7 +6648,7 @@ def reiniciar_bot(bot, borrar_csv=False):
     estado_bots[bot].update({
         "token": "DEMO", 
         "trigger_real": False,
-        "prob_ia": 0.0,
+        "prob_ia": 0.0, "prob_ia_oper": 0.0,
         "ia_ready": False,
         "ciclo_actual": 1,
         "modo_real_anunciado": False,
@@ -9295,6 +9548,14 @@ def maybe_retrain(force: bool = False):
             if len(feats_used) < int(TRAIN_PROMOTE_MIN_FEATURES):
                 promote_ok = False
                 promote_reasons.append(f"feats<{int(TRAIN_PROMOTE_MIN_FEATURES)}")
+            hg_train = _estado_guardrail_ia_fuerte(force=True)
+            if bool(hg_train.get("hard_block", False)):
+                promote_ok = False
+                rh = hg_train.get("reasons", []) if isinstance(hg_train, dict) else []
+                if isinstance(rh, list) and rh:
+                    promote_reasons.append("hard_guard:" + ",".join([str(x) for x in rh[:3]]))
+                else:
+                    promote_reasons.append("hard_guard")
         except Exception:
             pass
 
@@ -9436,10 +9697,25 @@ def maybe_retrain(force: bool = False):
 
 # === BLOQUE 11 — HUD Y PANEL VISUAL ===
 RENDER_LOCK = threading.Lock()
+RUNTIME_AUDIT_LOG_PATH = "runtime_log_ia.txt"
+RUNTIME_AUDIT_ENABLE = True
+
+def _runtime_audit_append(linea: str):
+    try:
+        if not bool(RUNTIME_AUDIT_ENABLE):
+            return
+        txt = str(linea or "").strip()
+        if not txt:
+            return
+        with open(RUNTIME_AUDIT_LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {txt}\n")
+    except Exception:
+        pass
 
 def agregar_evento(texto: str):
     limpio = _normalizar_evento_texto(texto)
     eventos_recentes.append(f"[{time.strftime('%H:%M:%S')}] {limpio}")
+    _runtime_audit_append(f"EVENTO: {limpio}")
 
 def limpiar_consola():
     os.system("cls" if os.name == "nt" else "clear")
@@ -9631,13 +9907,13 @@ def mostrar_panel():
             p_raw_txt = f"{p_raw_best*100:.1f}%" if isinstance(p_raw_best, (int, float)) else "--"
             p_pre_txt = f"{p_pre_best*100:.1f}%" if isinstance(p_pre_best, (int, float)) else "--"
 
-            print(
-                padding
-                + Fore.YELLOW
-                + f"🧩 WHY-NO: CAP≈{cap_now*100:.1f}% (warmup={'sí' if warmup_live else 'no'}) | "
-                  f"AUTO={auto_state} reliable={'sí' if reliable else 'no'} canary={'sí' if canary_live else 'no'} n={n_samples_live} p_raw={p_raw_txt} p_pre={p_pre_txt} p_cap={best_prob*100:.1f}% why={why_txt} | canary_prog={canary_prog_txt} hit={c_hit:.1f}% | "
-                  f"ROOF mode={mode_h} confirm={confirm_txt_h} trigger_ok={'sí' if trigger_ok_h else 'no'} trig_force={'sí' if bool(DYN_ROOF_STATE.get('last_trigger_force', False)) else 'no'} gate_consumed={'sí' if clone_gate else 'no'}"
+            why_line = (
+                f"🧩 WHY-NO: CAP≈{cap_now*100:.1f}% (warmup={'sí' if warmup_live else 'no'}) | "
+                f"AUTO={auto_state} reliable={'sí' if reliable else 'no'} canary={'sí' if canary_live else 'no'} n={n_samples_live} p_raw={p_raw_txt} p_pre={p_pre_txt} p_cap={best_prob*100:.1f}% why={why_txt} | canary_prog={canary_prog_txt} hit={c_hit:.1f}% | "
+                f"ROOF mode={mode_h} confirm={confirm_txt_h} trigger_ok={'sí' if trigger_ok_h else 'no'} trig_force={'sí' if bool(DYN_ROOF_STATE.get('last_trigger_force', False)) else 'no'} gate_consumed={'sí' if clone_gate else 'no'}"
             )
+            print(padding + Fore.YELLOW + why_line)
+            _runtime_audit_append(why_line)
 
             # ===== HUD DIAGNÓSTICO RÁPIDO (solo visual, no cambia lógica) =====
             roof_h = float(DYN_ROOF_STATE.get("roof", DYN_ROOF_FLOOR) or DYN_ROOF_FLOOR)
@@ -9702,9 +9978,13 @@ def mostrar_panel():
             print(padding + Fore.CYAN + f"🧪 Embudo: {funnel_txt}")
             if owner in BOT_NAMES:
                 principal_txt = f"{principal_txt} (solo nuevas entradas; REAL activo={owner})"
-            print(padding + Fore.CYAN + f"🧭 Decisión tick: P_model={p_model*100:.1f}% | P_oper={p_oper*100:.1f}% | Bloqueo principal={principal_txt}")
+            decision_line = f"🧭 Decisión tick: P_model={p_model*100:.1f}% | P_oper={p_oper*100:.1f}% | Bloqueo principal={principal_txt}"
+            print(padding + Fore.CYAN + decision_line)
+            _runtime_audit_append(decision_line)
             print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | CLASSIC={IA_ACTIVACION_REAL_THR*100:.0f}%")
-            print(padding + Fore.CYAN + f"📉 Bloqueo dominante ({len(HUD_BLOQUEOS_RECIENTES)} ticks): {top_txt}")
+            bloqueos_line = f"📉 Bloqueo dominante ({len(HUD_BLOQUEOS_RECIENTES)} ticks): {top_txt}"
+            print(padding + Fore.CYAN + bloqueos_line)
+            _runtime_audit_append(bloqueos_line)
 
             # Diagnóstico por bot (top-3) para ver exactamente qué compuerta frena.
             try:
@@ -10683,7 +10963,7 @@ def resetear_estado_hud(estado_bots: dict):
         estado_bots[bot].update({
             "resultados": [], "ganancias": 0, "perdidas": 0,
             "porcentaje_exito": None, "tamano_muestra": 0,
-            "prob_ia": 0.0, "token": "DEMO",
+            "prob_ia": 0.0, "prob_ia_oper": 0.0, "token": "DEMO",
             "fuente": None, "modo_ia": "off",
             "ia_seniales": 0, "ia_aciertos": 0, "ia_fallos": 0, "ia_senal_pendiente": False,
             "ia_prob_senal": None
@@ -12462,7 +12742,7 @@ async def main():
                                     # Redundancia: no bloquear en seco; aplicar penalización de score y desempate posterior.
                                     redundante_tick = bool(estado_bots.get(b, {}).get("ia_input_redundante", False))
 
-                                    p = estado_bots[b].get("prob_ia", None)
+                                    p = _prob_ia_operativa_bot(b, default=None)
                                     if not isinstance(p, (int, float)):
                                         continue
                                     # Primer filtro suave: evitar basura por debajo del piso operativo.
@@ -12736,10 +13016,12 @@ async def main():
                                     best_bot_local = None
                                 unrel_thr_live = float(_umbral_unrel_operativo(best_bot_local, best_prob))
                                 gate_strong_unrel = False
+                                guard_hard = _estado_guardrail_ia_fuerte(force=False)
                                 try:
                                     dgate = dyn_gate if isinstance(dyn_gate, dict) else {}
                                     gate_strong_unrel = bool(
                                         AUTO_REAL_UNRELIABLE_ALLOW_STRONG_GATE
+                                        and (not bool(guard_hard.get("active", False)))
                                         and bool(dgate.get("allow_real", False))
                                         and bool(dgate.get("trigger_ok", False))
                                         and (float(dgate.get("p_best", 0.0) or 0.0) >= float(AUTO_REAL_UNRELIABLE_GATE_MIN_PROB))
@@ -12775,6 +13057,12 @@ async def main():
                                         why_nr.append(f"auc<{AUTO_REAL_UNRELIABLE_MIN_AUC:.2f}")
                                     if bool(AUTO_REAL_BLOCK_WHEN_WARMUP) and warmup_live:
                                         why_nr.append("warmup")
+                                    if bool(guard_hard.get("active", False)):
+                                        reasons_hg = guard_hard.get("reasons", []) if isinstance(guard_hard, dict) else []
+                                        if isinstance(reasons_hg, list) and reasons_hg:
+                                            why_nr.extend([str(x) for x in reasons_hg[:4]])
+                                        else:
+                                            why_nr.append("HG:ACTIVE")
                                     why_nr_txt = ", ".join(why_nr) if why_nr else "regla_adapt"
                                     agregar_evento(
                                         f"🛡️ IA AUTO bloqueado: modelo no confiable (reliable=false, {why_nr_txt})."
@@ -12819,7 +13107,7 @@ async def main():
                                         estado_bots[mejor_bot]["ia_senal_pendiente"] = False
                                         estado_bots[mejor_bot]["ia_prob_senal"] = None
                         else:
-                            max_prob = max((estado_bots[bot]["prob_ia"] for bot in BOT_NAMES if estado_bots[bot]["ia_ready"]), default=0)
+                            max_prob = max((_prob_ia_operativa_bot(bot, default=0.0) for bot in BOT_NAMES if estado_bots[bot]["ia_ready"]), default=0)
                             if max_prob < umbral_ia_real:
                                 pass
 
