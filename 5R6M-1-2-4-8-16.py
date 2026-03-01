@@ -6670,6 +6670,8 @@ def elegir_candidato_rotacion_marti(candidatos: list, ciclo_objetivo: int):
     """
     Rotación estricta para REAL en C2..C{MAX_CICLOS}:
     - Excluye bots ya usados en la corrida activa (bots_usados_en_esta_marti).
+    - Excluye además el último bot REAL operado para impedir repetición seguida
+      aunque haya desincronización temporal del tracking de usados.
     - Si no hay elegibles nuevos, retorna None (NO repetir bot en la misma martingala).
     """
     try:
@@ -6682,6 +6684,8 @@ def elegir_candidato_rotacion_marti(candidatos: list, ciclo_objetivo: int):
 
     usados = [b for b in bots_usados_en_esta_marti if b in BOT_NAMES]
     usados_set = set(usados)
+    if ultimo_bot_real in BOT_NAMES:
+        usados_set.add(str(ultimo_bot_real))
     candidatos_nuevos = [c for c in candidatos if c[1] not in usados_set]
     if candidatos_nuevos:
         return candidatos_nuevos[0]
@@ -9586,7 +9590,7 @@ def mostrar_panel():
             p_raw_best = None
             p_pre_best = None
             try:
-                bb = dyn_gate.get("best_bot") if isinstance(dyn_gate, dict) else None
+                bb = DYN_ROOF_STATE.get("confirm_bot", None)
                 if not (isinstance(bb, str) and bb in estado_bots):
                     live_best = []
                     for bname in BOT_NAMES:
@@ -9625,7 +9629,7 @@ def mostrar_panel():
                 + Fore.YELLOW
                 + f"🧩 WHY-NO: CAP≈{cap_now*100:.1f}% (warmup={'sí' if warmup_live else 'no'}) | "
                   f"AUTO={auto_state} reliable={'sí' if reliable else 'no'} canary={'sí' if canary_live else 'no'} n={n_samples_live} p_raw={p_raw_txt} p_pre={p_pre_txt} p_cap={best_prob*100:.1f}% why={why_txt} | canary_prog={canary_prog_txt} hit={c_hit:.1f}% | "
-                  f"ROOF mode={mode_h} confirm={confirm_txt_h} trigger_ok={'sí' if trigger_ok_h else 'no'} trig_force={'sí' if bool((dyn_gate or {}).get('trigger_force', False)) else 'no'} gate_consumed={'sí' if clone_gate else 'no'}"
+                  f"ROOF mode={mode_h} confirm={confirm_txt_h} trigger_ok={'sí' if trigger_ok_h else 'no'} trig_force={'sí' if bool(DYN_ROOF_STATE.get('last_trigger_force', False)) else 'no'} gate_consumed={'sí' if clone_gate else 'no'}"
             )
 
             # ===== HUD DIAGNÓSTICO RÁPIDO (solo visual, no cambia lógica) =====
@@ -11511,6 +11515,7 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
         DYN_ROOF_STATE["last_floor_eff"] = float(floor_eff)
         DYN_ROOF_STATE["last_confirm_need"] = int(confirm_need)
         DYN_ROOF_STATE["last_trigger_ok"] = bool(trigger_ok)
+        DYN_ROOF_STATE["last_trigger_force"] = bool(trigger_force)
         for b_live, p_live, _n_live in live:
             prev_probs[str(b_live)] = float(p_live)
         DYN_ROOF_STATE["prev_probs"] = prev_probs
