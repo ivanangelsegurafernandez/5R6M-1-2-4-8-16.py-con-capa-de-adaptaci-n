@@ -9986,6 +9986,68 @@ def mostrar_panel():
             print(padding + Fore.CYAN + bloqueos_line)
             _runtime_audit_append(bloqueos_line)
 
+            # Etiquetas separadas por bot: CONTABLE (calibración) vs OPERABLE (REAL).
+            try:
+                tags = []
+                thr_oper = float(_umbral_real_operativo_actual())
+                for b in BOT_NAMES:
+                    st_b = estado_bots.get(b, {}) if isinstance(estado_bots, dict) else {}
+                    p_diag_b = st_b.get("prob_ia", None)
+                    p_oper_b = _prob_ia_operativa_bot(b, default=None)
+                    c_ok = bool(isinstance(p_diag_b, (int, float)) and np.isfinite(float(p_diag_b)) and float(p_diag_b) >= float(IA_CALIB_THRESHOLD))
+                    o_ok = bool(
+                        isinstance(p_oper_b, (int, float))
+                        and np.isfinite(float(p_oper_b))
+                        and bool(st_b.get("ia_ready", False))
+                        and str(st_b.get("modo_ia", "off")).lower() != "off"
+                        and ia_prob_valida(b, max_age_s=12.0)
+                        and (float(p_oper_b) >= float(thr_oper))
+                    )
+                    tags.append(f"{b}:C{'✅' if c_ok else '❌'}|O{'✅' if o_ok else '❌'}")
+                tags_line = "🏷️ Etiquetas bot: " + " · ".join(tags)
+                print(padding + Fore.CYAN + tags_line)
+                _runtime_audit_append(tags_line)
+            except Exception:
+                pass
+
+            # GO/NO-GO rápido para REAL continuo (disciplina operativa).
+            try:
+                meta_go = _ORACLE_CACHE.get("meta") or leer_model_meta() or {}
+                n_samples_go = int(meta_go.get("n_samples", meta_go.get("n", 0)) or 0)
+                auc_go = float(meta_go.get("auc", 0.0) or 0.0)
+                rel_go = bool(meta_go.get("reliable", False))
+                rep_go = auditar_calibracion_seniales_reales(min_prob=float(IA_CALIB_THRESHOLD)) or {}
+                closed_go = int(rep_go.get("n_total_closed", rep_go.get("n", 0)) or 0)
+                hg_go = _estado_guardrail_ia_fuerte(force=False)
+                go_ok = bool(
+                    (n_samples_go >= 250)
+                    and (closed_go >= 80)
+                    and rel_go
+                    and (auc_go >= 0.53)
+                    and (not bool(hg_go.get("hard_block", False)))
+                )
+                go_reasons = []
+                if n_samples_go < 250:
+                    go_reasons.append("n_samples<250")
+                if closed_go < 80:
+                    go_reasons.append("closed<80")
+                if not rel_go:
+                    go_reasons.append("reliable=false")
+                if auc_go < 0.53:
+                    go_reasons.append("auc<0.53")
+                if bool(hg_go.get("hard_block", False)):
+                    go_reasons.append("hard_guard=RED")
+                go_line = (
+                    f"🧭 GO/NO-GO REAL: {'GO ✅' if go_ok else 'NO-GO ❌'} "
+                    f"(n={n_samples_go}, closed={closed_go}, auc={auc_go:.3f}, rel={'sí' if rel_go else 'no'}, HG={hg_go.get('level','GREEN')})"
+                )
+                if go_reasons:
+                    go_line += " | why=" + ",".join(go_reasons[:5])
+                print(padding + Fore.CYAN + go_line)
+                _runtime_audit_append(go_line)
+            except Exception:
+                pass
+
             # Diagnóstico por bot (top-3) para ver exactamente qué compuerta frena.
             try:
                 global _LAST_HUD_BOT_GATE_DIAG_TS
