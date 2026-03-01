@@ -174,6 +174,9 @@ HUD_VISIBLE = True       # Para ocultarlo con tecla
 IA_OBJETIVO_REAL_THR = 0.70   # objetivo de calidad REAL (meta: 70% aprox)
 IA_ACTIVACION_REAL_THR = 0.85 # mínimo operativo para activar señal REAL
 IA_ACTIVACION_REAL_THR_POST_N15 = 0.75  # al cumplir n mínimo por bot, el umbral operativo baja solo hasta 75%
+# En modo unreliable (reliable=false), permitir piso post-n15 más realista para no congelar entradas.
+IA_ACTIVACION_REAL_THR_POST_N15_UNREL = 0.60
+IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES = 300
 IA_ACTIVACION_REAL_MIN_N_POR_BOT = 15   # condición: todos los bots deben tener al menos n=15
 
 # --- Oráculo visual ---
@@ -185,7 +188,9 @@ ORACULO_DELTA_PRE = 0.05
 IA_VERDE_THR = IA_ACTIVACION_REAL_THR
 IA_SUCESO_LOOKBACK = 16
 IA_SUCESO_DELTA_MIN = 0.035
-IA_SUCESO_EVENTO_MIN = 0.55
+IA_SUCESO_EVENTO_MIN = 0.20
+IA_SUCESO_EVENTO_Q = 0.85
+IA_SUCESO_EVENTO_HIST = 120
 IA_SENSOR_DOM_HOT = 0.95
 IA_SENSOR_MIN_HOT_FEATS = 3
 IA_SENSOR_MIN_SAMPLE = 30
@@ -219,6 +224,19 @@ IA_SHRINK_ALPHA = 0.60               # p_ajustada = alpha*p + (1-alpha)*tasa_bas
 IA_SHRINK_ALPHA_MIN = 0.45           # piso de mezcla (más conservador en descalibración fuerte)
 IA_SHRINK_ALPHA_MAX = 0.85           # techo de mezcla (más sensible cuando la calibración mejora)
 IA_BASE_RATE_WINDOW = 300            # cierres recientes para tasa base rolling
+# Guardrail explícito de sobreconfianza en bucket alto (fase 1, bajo riesgo).
+IA_OVERCONF_BUCKET_MIN_PROB = 0.90
+IA_OVERCONF_MIN_N = 20
+IA_OVERCONF_GAP_MAX_PP = 0.15
+IA_OVERCONF_DYNAMIC_CAP = 0.90
+IA_CHECKPOINT_CLOSED_STEP = 20
+# Impulso por racha reciente (micro-ajuste dinámico para evitar Prob IA plana).
+IA_RACHA_BOOST_ENABLE = True
+IA_RACHA_BOOST_WINDOW = 8
+IA_RACHA_BOOST_MAX_UP = 0.07
+IA_RACHA_BOOST_MAX_DN = 0.05
+IA_RACHA_BOOST_MIN_WINS = 5
+IA_RACHA_BOOST_LOG_COOLDOWN_S = 25.0
 # Cap conservador de probabilidad durante warmup para evitar inflado (ej. 99-100%).
 IA_WARMUP_PROB_CAP_MIN = 0.70
 IA_WARMUP_PROB_CAP_MAX = 0.85
@@ -228,15 +246,15 @@ IA_WARMUP_LOW_EVIDENCE_CAP_POST_N15 = 0.85
 
 AUTO_REAL_ALLOW_UNRELIABLE_POST_N15 = True
 AUTO_REAL_UNRELIABLE_MIN_N = 80
-AUTO_REAL_UNRELIABLE_MIN_PROB = 0.63  # más permisivo en reliable=false (sube activación y riesgo de falsos positivos)
-AUTO_REAL_UNRELIABLE_MIN_AUC = 0.50   # si AUC cae bajo azar, no habilitar AUTO aunque post-n15
+AUTO_REAL_UNRELIABLE_MIN_PROB = 0.58  # base más realista: evita bloqueo permanente cuando el modelo no escala a 63%
+AUTO_REAL_UNRELIABLE_MIN_AUC = 0.48   # tolerancia leve en unreliable para no congelar AUTO con AUC marginal
 AUTO_REAL_BLOCK_WHEN_WARMUP = True    # durante warmup evita promoción AUTO en modo unreliable
 # Ajuste mínimo anti-congelamiento lateral: permite bajar el umbral UNREL
 # solo cuando hay evidencia operativa consistente por bot.
 AUTO_REAL_UNREL_LATERAL_ADAPT_ENABLE = True
-AUTO_REAL_UNREL_LATERAL_MIN_N = 70
-AUTO_REAL_UNREL_LATERAL_MIN_WR = 0.56
-AUTO_REAL_UNREL_LATERAL_MIN_PROB = 0.58
+AUTO_REAL_UNREL_LATERAL_MIN_N = 50
+AUTO_REAL_UNREL_LATERAL_MIN_WR = 0.50
+AUTO_REAL_UNREL_LATERAL_MIN_PROB = 0.55
 # Bypass controlado: si la compuerta REAL ya está sólida en vivo, permitir AUTO
 # aunque el modelo siga en warmup/reliable=false.
 AUTO_REAL_UNRELIABLE_ALLOW_STRONG_GATE = True
@@ -450,6 +468,10 @@ FEATURE_MIN_ACCEPTED_COUNT = 6
 IA_TARGET_PRECISION = 0.70
 IA_TARGET_PRECISION_FLOOR = 0.65   # piso mínimo para declarar confiable
 IA_TARGET_MIN_SIGNALS = 30         # mínimo de señales en zona alta para validar
+
+# Guardas de promoción de campeón: evitar reemplazar por modelos débiles/colapsados.
+TRAIN_PROMOTE_MIN_AUC = 0.50
+TRAIN_PROMOTE_MIN_FEATURES = 5
 
 FEATURE_NAMES_PROD = list(FEATURE_ALWAYS_KEEP)
 FEATURE_NAMES_SHADOW = [f for f in FEATURE_NAMES_CORE_13 if f not in FEATURE_NAMES_PROD]
@@ -693,6 +715,8 @@ IA90_stats = {bot: {"n": 0, "ok": 0, "pct": 0.0, "pct_raw": 0.0, "pct_smooth": 5
 # Ventana corta para diagnosticar el bloqueo dominante del embudo en HUD.
 HUD_BLOQUEO_WINDOW = 120
 HUD_BLOQUEOS_RECIENTES = deque(maxlen=HUD_BLOQUEO_WINDOW)
+HUD_BOT_GATE_DIAG_EVERY_S = 6.0
+_LAST_HUD_BOT_GATE_DIAG_TS = 0.0
 
 EVENTO_MAX_CHARS = 220
 
@@ -3355,6 +3379,9 @@ def _safe_read_csv_any_encoding(path: str) -> pd.DataFrame | None:
     return None
 
 _IA_RUNTIME_CAL_CACHE = {"ts": 0.0, "base_rate": 0.5, "n70": 0}
+_IA_OVERCONF_CACHE = {"ts": 0.0, "active": False, "cap": 1.0, "n": 0, "gap_pp": 0.0}
+_IA_CHECKPOINT_CACHE = {"last_closed": 0, "last_ts": 0.0}
+_IA_BOT45_TRACE_CACHE = {"ts": 0.0, "msg": ""}
 _GATE_ACTIVO_CACHE = {}
 _GATE_SEGMENTO_CACHE = {}
 
@@ -3880,6 +3907,196 @@ def _ajustar_prob_por_evidencia_bot(bot: str, prob: float | None) -> float | Non
 
         p2 = float(max(0.0, min(1.0, p + delta)))
         return p2
+    except Exception:
+        return prob
+
+
+
+
+def _to_win01(v) -> int | None:
+    """Normaliza resultado a {1=win,0=loss,None}."""
+    try:
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            fv = float(v)
+            if fv == 1.0:
+                return 1
+            if fv == 0.0:
+                return 0
+        s = str(v).strip()
+        if not s:
+            return None
+        if s in ("✓", "1", "WIN", "G", "GANANCIA"):
+            return 1
+        if s in ("✗", "0", "LOSS", "L", "PÉRDIDA", "PERDIDA"):
+            return 0
+        nr = normalizar_resultado(s)
+        if nr == "GANANCIA":
+            return 1
+        if nr == "PÉRDIDA":
+            return 0
+    except Exception:
+        pass
+    return None
+
+
+def _ajustar_prob_por_racha_reciente(bot: str, prob: float | None) -> float | None:
+    """Micro-ajuste por racha reciente para reducir planicie de probabilidad en runtime."""
+    try:
+        if not bool(IA_RACHA_BOOST_ENABLE):
+            return prob
+        if not isinstance(prob, (int, float)):
+            return prob
+        p = max(0.0, min(1.0, float(prob)))
+
+        st = estado_bots.get(bot, {}) if isinstance(estado_bots, dict) else {}
+        res = st.get("resultados", [])
+        if not isinstance(res, list) or len(res) == 0:
+            return p
+
+        w = max(4, int(IA_RACHA_BOOST_WINDOW))
+        tail_raw = res[-w:]
+        tail = []
+        for x in tail_raw:
+            y = _to_win01(x)
+            if y in (0, 1):
+                tail.append(y)
+
+        if len(tail) < 4:
+            return p
+
+        wins = int(sum(tail))
+        losses = int(len(tail) - wins)
+        wr = float(wins / max(1, len(tail)))
+
+        streak = 0
+        for y in reversed(tail):
+            if y == 1:
+                streak += 1
+            else:
+                break
+
+        # Núcleo: edge vs 50% + bono por racha terminal de wins
+        edge = max(-0.5, min(0.5, wr - 0.5))
+        delta = edge * 0.12
+        if wins >= int(IA_RACHA_BOOST_MIN_WINS):
+            delta += min(0.03, 0.01 * float(streak))
+
+        # Protección: con n corto, hacer ajuste más suave
+        n_eff = float(len(tail)) / float(max(1, w))
+        delta *= max(0.60, min(1.0, n_eff))
+
+        up = float(max(0.0, IA_RACHA_BOOST_MAX_UP))
+        dn = float(max(0.0, IA_RACHA_BOOST_MAX_DN))
+        delta = max(-dn, min(up, float(delta)))
+
+        p2 = float(max(0.0, min(1.0, p + delta)))
+
+        # Seguimiento específico de fulll45
+        if str(bot) == "fulll45":
+            global _IA_BOT45_TRACE_CACHE
+            now = time.time()
+            last_ts = float(_IA_BOT45_TRACE_CACHE.get("ts", 0.0) or 0.0)
+            if (now - last_ts) >= float(IA_RACHA_BOOST_LOG_COOLDOWN_S):
+                msg = (
+                    f"🔎 BOT45 racha: wins={wins}/{len(tail)} streak={streak} "
+                    f"p_base={p*100:.1f}% -> p_racha={p2*100:.1f}% (Δ={delta*100:+.1f}pp)"
+                )
+                _ag_evt(msg)
+                _IA_BOT45_TRACE_CACHE = {"ts": now, "msg": msg}
+
+        return p2
+    except Exception:
+        return prob
+
+
+def _get_overconf_guardrail_state(force: bool = False, ttl_s: float = 15.0) -> dict:
+    """Estado de sobreconfianza en bucket alto para aplicar cap temporal."""
+    global _IA_OVERCONF_CACHE
+    now = time.time()
+    try:
+        if (not force) and ((now - float(_IA_OVERCONF_CACHE.get("ts", 0.0) or 0.0)) <= float(ttl_s)):
+            return dict(_IA_OVERCONF_CACHE)
+
+        rep = auditar_calibracion_seniales_reales(min_prob=float(IA_OVERCONF_BUCKET_MIN_PROB)) or {}
+        n = int(rep.get("n", 0) or 0)
+        avg_pred = rep.get("avg_pred", None)
+        win_rate = rep.get("win_rate", None)
+        if isinstance(avg_pred, (int, float)) and isinstance(win_rate, (int, float)):
+            gap_pp = float((float(avg_pred) - float(win_rate)) * 100.0)
+            gap_abs = float(abs(float(avg_pred) - float(win_rate)))
+        else:
+            gap_pp = 0.0
+            gap_abs = 0.0
+
+        active = bool((n >= int(IA_OVERCONF_MIN_N)) and (gap_abs >= float(IA_OVERCONF_GAP_MAX_PP)) and (gap_pp > 0.0))
+        out = {
+            "ts": now,
+            "active": bool(active),
+            "cap": float(IA_OVERCONF_DYNAMIC_CAP if active else 1.0),
+            "n": int(n),
+            "gap_pp": float(gap_pp),
+        }
+        _IA_OVERCONF_CACHE = out
+        return dict(out)
+    except Exception:
+        return dict(_IA_OVERCONF_CACHE)
+
+
+def _maybe_emit_calibration_checkpoint(force: bool = False) -> None:
+    """Emitir checkpoint compacto cada +IA_CHECKPOINT_CLOSED_STEP cierres reales."""
+    global _IA_CHECKPOINT_CACHE
+    try:
+        now = time.time()
+        rep = auditar_calibracion_seniales_reales(min_prob=float(IA_CALIB_THRESHOLD)) or {}
+        closed = int(rep.get("n_total_closed", rep.get("n", 0)) or 0)
+        step = max(1, int(IA_CHECKPOINT_CLOSED_STEP))
+        last_closed = int(_IA_CHECKPOINT_CACHE.get("last_closed", 0) or 0)
+        last_ts = float(_IA_CHECKPOINT_CACHE.get("last_ts", 0.0) or 0.0)
+
+        if (not force):
+            if (closed - last_closed) < step:
+                return
+            if (now - last_ts) < 20.0:
+                return
+
+        wr = rep.get("win_rate", None)
+        ap = rep.get("avg_pred", None)
+        ece = rep.get("ece", None)
+        brier = rep.get("brier", None)
+        msg = (
+            f"📊 IA checkpoint: cerradas={closed} | "
+            f"Pred={((float(ap)*100.0) if isinstance(ap,(int,float)) else 0.0):.1f}% | "
+            f"Real={((float(wr)*100.0) if isinstance(wr,(int,float)) else 0.0):.1f}% | "
+            f"ECE={float(ece):.3f} | Brier={float(brier):.3f}"
+        )
+        _ag_evt(msg)
+
+        high = _get_overconf_guardrail_state(force=True)
+        if bool(high.get("active", False)):
+            _ag_evt(
+                "🛡️ IA guardrail: sobreconfianza alta detectada "
+                f"(n90={int(high.get('n',0))}, gap={float(high.get('gap_pp',0.0)):+.1f}pp). "
+                f"Cap temporal <= {float(high.get('cap',1.0))*100.0:.1f}%."
+            )
+
+        _IA_CHECKPOINT_CACHE = {"last_closed": int(closed), "last_ts": now}
+    except Exception:
+        pass
+
+
+def _cap_prob_por_sobreconfianza(prob: float | None) -> float | None:
+    """Cap dinámico cuando el bucket 90-100% se descalibra por sobreestimación."""
+    try:
+        if not isinstance(prob, (int, float)):
+            return prob
+        p = max(0.0, min(1.0, float(prob)))
+        st = _get_overconf_guardrail_state(force=False)
+        if not bool(st.get("active", False)):
+            return p
+        cap = float(st.get("cap", IA_OVERCONF_DYNAMIC_CAP) or IA_OVERCONF_DYNAMIC_CAP)
+        return float(min(p, max(0.0, min(1.0, cap))))
     except Exception:
         return prob
 
@@ -5183,10 +5400,25 @@ def predecir_prob_ia_bot(bot: str) -> tuple[float | None, str | None]:
 
         # 6) Predict proba
         try:
-            proba = model.predict_proba(X_scaled)
-            p = _extraer_probabilidad_clase_positiva(model, proba, default_idx=1)
-            if p is None:
-                return None, "PRED_FAIL:BAD_PROBA"
+            p_raw = None
+            p_cal = None
+
+            # Si el modelo está calibrado (wrapper), exponemos cruda vs calibrada.
+            if hasattr(model, "modelo_base") and hasattr(model, "_calibrar_p"):
+                proba_raw = model.modelo_base.predict_proba(X_scaled)
+                p_raw = _extraer_probabilidad_clase_positiva(model.modelo_base, proba_raw, default_idx=1)
+                if p_raw is None:
+                    return None, "PRED_FAIL:BAD_PROBA_RAW"
+                p_cal_arr = model._calibrar_p(np.asarray([float(p_raw)], dtype=float))
+                p_cal = float(np.asarray(p_cal_arr, dtype=float).reshape(-1)[0])
+                p = float(p_cal)
+            else:
+                proba = model.predict_proba(X_scaled)
+                p = _extraer_probabilidad_clase_positiva(model, proba, default_idx=1)
+                if p is None:
+                    return None, "PRED_FAIL:BAD_PROBA"
+                p_raw = float(p)
+                p_cal = float(p)
         except Exception as e:
             return None, f"PRED_FAIL:{type(e).__name__}"
 
@@ -5196,7 +5428,8 @@ def predecir_prob_ia_bot(bot: str) -> tuple[float | None, str | None]:
         # clamp
         p = max(0.0, min(1.0, p))
         try:
-            estado_bots[bot]["ia_prob_raw_model"] = float(p)
+            estado_bots[bot]["ia_prob_raw_model"] = float(max(0.0, min(1.0, float(p_raw if p_raw is not None else p))))
+            estado_bots[bot]["ia_prob_cal_model"] = float(max(0.0, min(1.0, float(p_cal if p_cal is not None else p))))
         except Exception:
             pass
         return p, None
@@ -5275,7 +5508,13 @@ def actualizar_prob_ia_bot(bot: str):
             p = _aplicar_orientacion_prob(float(p))
             p = _ajustar_prob_operativa(float(p))
             p = _ajustar_prob_por_evidencia_bot(bot, float(p))
+            p = _ajustar_prob_por_racha_reciente(bot, float(p))
+            try:
+                estado_bots[bot]["ia_prob_pre_cap"] = float(max(0.0, min(1.0, float(p))))
+            except Exception:
+                pass
             p = _cap_prob_por_madurez(float(p), bot=bot)
+            p = _cap_prob_por_sobreconfianza(float(p))
             estado_bots[bot]["prob_ia"] = float(p)
             estado_bots[bot]["ia_ready"] = True
             estado_bots[bot]["ia_last_err"] = None
@@ -5530,6 +5769,9 @@ def actualizar_prob_ia_todos():
     except Exception:
         pass
 
+    # 5) Checkpoint ligero de calibración cada bloque de cierres
+    _maybe_emit_calibration_checkpoint(force=False)
+
 def _sensor_plano_bot(bot: str, lookback: int = 80) -> tuple[bool, dict]:
     """Detecta si un bot tiene demasiadas features pegadas (dominancia alta)."""
     try:
@@ -5618,12 +5860,32 @@ def _detectar_suceso_prob_bot(bot: str, p_now: float | None) -> tuple[bool, floa
 
 
 def _evento_contexto_activo(bot: str) -> bool:
-    """True si hay evento de mercado razonable para validar un suceso relativo."""
+    """True si el contexto reciente sugiere evento en la escala real de features."""
     try:
         row = leer_ultima_fila_features_para_pred(bot) or {}
         brk = float(row.get("breakout", 0.0) or 0.0)
         reb = float(row.get("es_rebote", 0.0) or 0.0)
-        return bool(max(brk, reb) >= float(IA_SUCESO_EVENTO_MIN))
+
+        vals = []
+        rows = leer_features_bot(bot, n=int(IA_SUCESO_EVENTO_HIST))
+        if isinstance(rows, list):
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                try:
+                    vb = float(r.get("breakout", 0.0) or 0.0)
+                    vr = float(r.get("es_rebote", 0.0) or 0.0)
+                    v = max(vb, vr)
+                    if np.isfinite(v):
+                        vals.append(v)
+                except Exception:
+                    continue
+        dyn_thr = float(IA_SUCESO_EVENTO_MIN)
+        if vals:
+            qv = float(np.quantile(np.asarray(vals, dtype=float), float(IA_SUCESO_EVENTO_Q)))
+            dyn_thr = float(max(float(IA_SUCESO_EVENTO_MIN), min(0.95, qv)))
+
+        return bool(max(brk, reb) >= dyn_thr)
     except Exception:
         return False
 
@@ -6408,6 +6670,8 @@ def elegir_candidato_rotacion_marti(candidatos: list, ciclo_objetivo: int):
     """
     Rotación estricta para REAL en C2..C{MAX_CICLOS}:
     - Excluye bots ya usados en la corrida activa (bots_usados_en_esta_marti).
+    - Excluye además el último bot REAL operado para impedir repetición seguida
+      aunque haya desincronización temporal del tracking de usados.
     - Si no hay elegibles nuevos, retorna None (NO repetir bot en la misma martingala).
     """
     try:
@@ -6420,6 +6684,8 @@ def elegir_candidato_rotacion_marti(candidatos: list, ciclo_objetivo: int):
 
     usados = [b for b in bots_usados_en_esta_marti if b in BOT_NAMES]
     usados_set = set(usados)
+    if ultimo_bot_real in BOT_NAMES:
+        usados_set.add(str(ultimo_bot_real))
     candidatos_nuevos = [c for c in candidatos if c[1] not in usados_set]
     if candidatos_nuevos:
         return candidatos_nuevos[0]
@@ -8520,10 +8786,16 @@ def maybe_retrain(force: bool = False):
                 meta_prev = leer_model_meta() or {}
                 prev_n = int(meta_prev.get("n_samples", meta_prev.get("rows_total", meta_prev.get("n", 0))) or 0)
                 prev_reliable = bool(meta_prev.get("reliable", False))
+                prev_auc = float(meta_prev.get("auc", 0.0) or 0.0)
                 drop_floor = int(max(MIN_FIT_ROWS_PROD, round(float(prev_n) * float(TRAIN_ROWS_DROP_GUARD_RATIO))))
                 collapse_guard_on = bool((prev_n >= int(TRAIN_ROWS_DROP_GUARD_MIN_PREV)) or prev_reliable)
 
-                if collapse_guard_on and (int(n_total) < int(drop_floor)):
+                # Si el campeón anterior ya era flojo/no confiable, permitimos refresh con menos filas
+                # para evitar quedarse pegado a un modelo viejo por horas.
+                stale_champion = bool((not prev_reliable) or (prev_auc < 0.51))
+                allow_refresh_with_small = bool(stale_champion and int(n_total) >= int(MIN_FIT_ROWS_PROD))
+
+                if collapse_guard_on and (int(n_total) < int(drop_floor)) and (not allow_refresh_with_small):
                     try:
                         agregar_evento(
                             f"🛡️ IA: NO actualizo (muestra cayó {prev_n}->{n_total}; mínimo guard={drop_floor})."
@@ -8531,6 +8803,13 @@ def maybe_retrain(force: bool = False):
                     except Exception:
                         pass
                     return False
+                elif collapse_guard_on and (int(n_total) < int(drop_floor)) and allow_refresh_with_small:
+                    try:
+                        agregar_evento(
+                            f"♻️ IA refresh permitido: campeón previo flojo (reliable={prev_reliable}, auc={prev_auc:.3f}) con muestra {n_total}."
+                        )
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -8999,6 +9278,28 @@ def maybe_retrain(force: bool = False):
                 except Exception:
                     pass
 
+        # 16.5) Guardia de promoción: si el candidato sale flojo, NO tomar volante.
+        promote_ok = bool(True)
+        promote_reasons = []
+        try:
+            if float(auc) < float(TRAIN_PROMOTE_MIN_AUC):
+                promote_ok = False
+                promote_reasons.append(f"auc<{float(TRAIN_PROMOTE_MIN_AUC):.2f}")
+            if len(feats_used) < int(TRAIN_PROMOTE_MIN_FEATURES):
+                promote_ok = False
+                promote_reasons.append(f"feats<{int(TRAIN_PROMOTE_MIN_FEATURES)}")
+        except Exception:
+            pass
+
+        if (not force) and (not promote_ok):
+            try:
+                agregar_evento(
+                    f"🧯 IA: candidato NO promovido ({', '.join(promote_reasons)}). Se mantiene campeón previo."
+                )
+            except Exception:
+                pass
+            return False
+
         # 17) Guardado atómico (compatible con tu función si existe)
         meta = {
             "trained_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -9286,12 +9587,49 @@ def mostrar_panel():
                 why_reasons.append("trigger_no")
             why_txt = "none" if not why_reasons else ",".join(why_reasons)
 
+            p_raw_best = None
+            p_pre_best = None
+            try:
+                bb = DYN_ROOF_STATE.get("confirm_bot", None)
+                if not (isinstance(bb, str) and bb in estado_bots):
+                    live_best = []
+                    for bname in BOT_NAMES:
+                        stx = estado_bots.get(bname, {})
+                        px = stx.get("prob_ia", None)
+                        if bool(stx.get("ia_ready", False)) and isinstance(px, (int, float)) and np.isfinite(float(px)):
+                            live_best.append((float(px), bname))
+                    if live_best:
+                        bb = max(live_best, key=lambda t: t[0])[1]
+                if isinstance(bb, str) and bb in estado_bots:
+                    stbb = estado_bots.get(bb, {})
+                    pr = stbb.get("ia_prob_raw_model", None)
+                    if isinstance(pr, (int, float)) and np.isfinite(float(pr)):
+                        p_raw_best = float(pr)
+                    else:
+                        pc = stbb.get("ia_prob_cal_model", None)
+                        if isinstance(pc, (int, float)) and np.isfinite(float(pc)):
+                            p_raw_best = float(pc)
+                        else:
+                            pf = stbb.get("prob_ia", None)
+                            if isinstance(pf, (int, float)) and np.isfinite(float(pf)):
+                                p_raw_best = float(pf)
+                    pp = stbb.get("ia_prob_pre_cap", None)
+                    if isinstance(pp, (int, float)) and np.isfinite(float(pp)):
+                        p_pre_best = float(pp)
+                    elif isinstance(stbb.get("prob_ia", None), (int, float)) and np.isfinite(float(stbb.get("prob_ia", None))):
+                        p_pre_best = float(stbb.get("prob_ia", None))
+            except Exception:
+                p_raw_best = None
+                p_pre_best = None
+            p_raw_txt = f"{p_raw_best*100:.1f}%" if isinstance(p_raw_best, (int, float)) else "--"
+            p_pre_txt = f"{p_pre_best*100:.1f}%" if isinstance(p_pre_best, (int, float)) else "--"
+
             print(
                 padding
                 + Fore.YELLOW
                 + f"🧩 WHY-NO: CAP≈{cap_now*100:.1f}% (warmup={'sí' if warmup_live else 'no'}) | "
-                  f"AUTO={auto_state} reliable={'sí' if reliable else 'no'} canary={'sí' if canary_live else 'no'} n={n_samples_live} p_best={best_prob*100:.1f}% why={why_txt} | canary_prog={canary_prog_txt} hit={c_hit:.1f}% | "
-                  f"ROOF mode={mode_h} confirm={confirm_txt_h} trigger_ok={'sí' if trigger_ok_h else 'no'} gate_consumed={'sí' if clone_gate else 'no'}"
+                  f"AUTO={auto_state} reliable={'sí' if reliable else 'no'} canary={'sí' if canary_live else 'no'} n={n_samples_live} p_raw={p_raw_txt} p_pre={p_pre_txt} p_cap={best_prob*100:.1f}% why={why_txt} | canary_prog={canary_prog_txt} hit={c_hit:.1f}% | "
+                  f"ROOF mode={mode_h} confirm={confirm_txt_h} trigger_ok={'sí' if trigger_ok_h else 'no'} trig_force={'sí' if bool(DYN_ROOF_STATE.get('last_trigger_force', False)) else 'no'} gate_consumed={'sí' if clone_gate else 'no'}"
             )
 
             # ===== HUD DIAGNÓSTICO RÁPIDO (solo visual, no cambia lógica) =====
@@ -9360,6 +9698,49 @@ def mostrar_panel():
             print(padding + Fore.CYAN + f"🧭 Decisión tick: P_model={p_model*100:.1f}% | P_oper={p_oper*100:.1f}% | Bloqueo principal={principal_txt}")
             print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | CLASSIC={IA_ACTIVACION_REAL_THR*100:.0f}%")
             print(padding + Fore.CYAN + f"📉 Bloqueo dominante ({len(HUD_BLOQUEOS_RECIENTES)} ticks): {top_txt}")
+
+            # Diagnóstico por bot (top-3) para ver exactamente qué compuerta frena.
+            try:
+                global _LAST_HUD_BOT_GATE_DIAG_TS
+                now_dbg = time.time()
+                if (now_dbg - float(_LAST_HUD_BOT_GATE_DIAG_TS or 0.0)) >= float(HUD_BOT_GATE_DIAG_EVERY_S):
+                    _LAST_HUD_BOT_GATE_DIAG_TS = now_dbg
+                    live_diag = []
+                    for b in BOT_NAMES:
+                        pb = estado_bots.get(b, {}).get("prob_ia", None)
+                        if isinstance(pb, (int, float)) and np.isfinite(float(pb)):
+                            live_diag.append((b, float(pb)))
+                    live_diag.sort(key=lambda x: x[1], reverse=True)
+
+                    roof_dbg = float(DYN_ROOF_STATE.get("roof", DYN_ROOF_FLOOR) or DYN_ROOF_FLOOR)
+                    confirm_bot_dbg = DYN_ROOF_STATE.get("confirm_bot")
+                    confirm_st_dbg = int(DYN_ROOF_STATE.get("confirm_streak", 0) or 0)
+                    confirm_need_dbg = int(DYN_ROOF_STATE.get("last_confirm_need", DYN_ROOF_CONFIRM_TICKS) or DYN_ROOF_CONFIRM_TICKS)
+
+                    dbg_chunks = []
+                    for b, pb in live_diag[:3]:
+                        unrel_b = float(_umbral_unrel_operativo(b, pb))
+                        unrel_ok_b = bool(pb >= unrel_b)
+                        roof_ok_b = bool(pb >= roof_dbg)
+                        suceso_ok_b = bool(estado_bots.get(b, {}).get("ia_suceso_ok", False))
+                        clone_b = bool(estado_bots.get(b, {}).get("ia_input_duplicado", False))
+
+                        if b == confirm_bot_dbg:
+                            conf_txt = f"{min(confirm_st_dbg, confirm_need_dbg)}/{confirm_need_dbg}"
+                        else:
+                            conf_txt = f"0/{confirm_need_dbg}"
+
+                        dbg_chunks.append(
+                            f"{b}:{pb*100:.1f}% UNR{'✅' if unrel_ok_b else f'❌({max(0.0,(unrel_b-pb))*100:.1f})'} "
+                            f"ROOF{'✅' if roof_ok_b else f'❌({max(0.0,(roof_dbg-pb))*100:.1f})'} "
+                            f"CONF{conf_txt} SUC{'✅' if suceso_ok_b else '❌'} CLN{'🛑' if clone_b else 'ok'}"
+                        )
+
+                    if dbg_chunks:
+                        print(padding + Fore.CYAN + f"🔬 Gates(top3): {' | '.join(dbg_chunks)}")
+            except Exception:
+                pass
+
             ref_racha = ultimo_bot_real if ultimo_bot_real in BOT_NAMES else "--"
             elegido_tick = mejor[0] if isinstance(mejor, tuple) and len(mejor) >= 1 else "--"
             print(padding + Fore.CYAN + f"🧾 Contexto racha: ref={ref_racha} | elegido_tick={elegido_tick} | token_real={owner_txt}")
@@ -10610,6 +10991,8 @@ DYN_ROOF_FLOOR = 0.70
 DYN_ROOF_GAP = 0.03
 # Confirmación mínima (ticks consecutivos del MISMO bot)
 DYN_ROOF_CONFIRM_TICKS = 2
+DYN_ROOF_TRIGGER_FORCE_STREAK = 4
+DYN_ROOF_TRIGGER_FORCE_MARGIN = 0.005
 # Tolerancia para considerar "tocado" el techo (near-roof)
 DYN_ROOF_NEAR_TOL = 0.005
 # Penalización por evidencia corta (n < 30): requiere +2pp al techo
@@ -10738,10 +11121,18 @@ def _umbral_real_operativo_actual() -> float:
     """
     Umbral REAL dinámico:
     - Base 85%
-    - Baja a 75% cuando TODOS los bots tienen n>=15
+    - Post-n15: 75%
+    - Si el modelo sigue unreliable con muestra suficiente, usar piso post-n15 más realista
+      para evitar bloqueo permanente por compuerta alta.
     """
     try:
         if _todos_bots_con_n_minimo_real():
+            meta = _ORACLE_CACHE.get("meta") or leer_model_meta() or {}
+            n_samples = int(meta.get("n_samples", meta.get("n", 0)) or 0)
+            warmup = bool(meta.get("warmup_mode", n_samples < int(TRAIN_WARMUP_MIN_ROWS)))
+            reliable = bool(meta.get("reliable", False)) and (not warmup)
+            if (not reliable) and (n_samples >= int(IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES)):
+                return float(IA_ACTIVACION_REAL_THR_POST_N15_UNREL)
             return float(IA_ACTIVACION_REAL_THR_POST_N15)
     except Exception:
         pass
@@ -10796,9 +11187,12 @@ def _smart_clone_override_ok(best_bot: str, p_best: float, p_second: float, clon
 
 def _umbral_unrel_operativo(best_bot: str | None, best_prob: float | None = None) -> float:
     """
-    Umbral UNREL dinámico (mínimo ajuste):
-    - Base: AUTO_REAL_UNRELIABLE_MIN_PROB (63%)
-    - En lateral con evidencia suficiente por bot, puede bajar hasta un piso seguro.
+    Umbral UNREL operativo con 2 capas:
+    - base conservadora (AUTO_REAL_UNRELIABLE_MIN_PROB).
+    - ajuste por lateral + percentil de prob reciente del bot (anti-congelamiento).
+
+    Objetivo: no exigir 63% fijo cuando el modelo está bien discriminado en un rango
+    más bajo (ej. 55-60%), evitando inflar artificialmente la probabilidad.
     """
     try:
         base = float(AUTO_REAL_UNRELIABLE_MIN_PROB)
@@ -10812,6 +11206,7 @@ def _umbral_unrel_operativo(best_bot: str | None, best_prob: float | None = None
         wr_bot = float((st.get("porcentaje_exito", 0.0) or 0.0) / 100.0)
         p_best = float(best_prob or 0.0)
 
+        # Capa 1: lateral clásico
         lateral_ok = bool(
             (n_bot >= int(AUTO_REAL_UNREL_LATERAL_MIN_N))
             and (wr_bot >= float(AUTO_REAL_UNREL_LATERAL_MIN_WR))
@@ -10819,6 +11214,27 @@ def _umbral_unrel_operativo(best_bot: str | None, best_prob: float | None = None
         )
         if lateral_ok:
             return float(max(float(AUTO_REAL_UNREL_LATERAL_MIN_PROB), min(base, p_best)))
+
+        # Capa 2: adaptación por distribución viva del bot (percentil robusto)
+        hist = st.get("ia_prob_hist_raw", [])
+        vals = []
+        if isinstance(hist, list):
+            for v in hist[-120:]:
+                try:
+                    x = float(v)
+                    if np.isfinite(x) and 0.0 <= x <= 1.0:
+                        vals.append(x)
+                except Exception:
+                    continue
+
+        # Requiere evidencia mínima y WR no negativo para evitar sesgo optimista
+        if (len(vals) >= 24) and (n_bot >= 40) and (wr_bot >= 0.48):
+            q80 = float(np.quantile(np.asarray(vals, dtype=float), 0.80))
+            # margen pequeño: pedimos estar cerca del percentil alto reciente
+            thr_q = float(max(0.55, min(base, q80 - 0.01)))
+            if p_best >= (thr_q - 0.01):
+                return float(thr_q)
+
         return base
     except Exception:
         return float(AUTO_REAL_UNRELIABLE_MIN_PROB)
@@ -11060,10 +11476,16 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
         # - Modo B (post-n15): si ya hubo confirmación sostenida, usar suceso_ok
         #   para no quedar "pegado" cuando p_best orbita el mismo nivel sin nuevo cruce.
         # - Modo C: mantiene criterio conservador basado en suceso_ok + evidencia.
+        trigger_force = bool(
+            modo_relajado_n15
+            and (int(confirm_streak) >= int(max(confirm_need, DYN_ROOF_TRIGGER_FORCE_STREAK)))
+            and (float(p_best) >= float(floor_eff - DYN_ROOF_TRIGGER_FORCE_MARGIN))
+        )
+
         if mode_c_active:
             trigger_ok = bool(suceso_ok)
         elif modo_relajado_n15:
-            trigger_ok = bool(suceso_ok or crossed_up)
+            trigger_ok = bool(suceso_ok or crossed_up or trigger_force)
         else:
             trigger_ok = bool(crossed_up)
         if warmup_mode and (not mode_c_active):
@@ -11093,6 +11515,7 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
         DYN_ROOF_STATE["last_floor_eff"] = float(floor_eff)
         DYN_ROOF_STATE["last_confirm_need"] = int(confirm_need)
         DYN_ROOF_STATE["last_trigger_ok"] = bool(trigger_ok)
+        DYN_ROOF_STATE["last_trigger_force"] = bool(trigger_force)
         for b_live, p_live, _n_live in live:
             prev_probs[str(b_live)] = float(p_live)
         DYN_ROOF_STATE["prev_probs"] = prev_probs
@@ -11113,6 +11536,7 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
             "crossed_up": bool(crossed_up),
             "suceso_ok": bool(suceso_ok),
             "trigger_ok": bool(trigger_ok),
+            "trigger_force": bool(trigger_force),
             "gate_mode": str(gate_mode),
             "stall_s": float(stall_s),
             "floor_eff": float(floor_eff),
@@ -11959,7 +12383,8 @@ async def main():
 
                                         regime_score = _score_regimen_contexto(_ultimo_contexto_operativo_bot(b))
                                         p_post = float(p)
-                                        score_final = float(p_post)
+                                        p_rank = float(estado_bots.get(b, {}).get("ia_prob_pre_cap", p_post) or p_post)
+                                        score_final = float(max(0.0, min(1.0, p_rank)))
                                         estado_bots[b]["ia_regime_score"] = float(regime_score)
                                         estado_bots[b]["ia_evidence_n"] = int(estado_bots[b].get("ia_evidence_n", 0) or 0)
                                         estado_bots[b]["ia_evidence_wr"] = float(estado_bots[b].get("ia_evidence_wr", 0.0) or 0.0)
@@ -12171,10 +12596,34 @@ async def main():
                                         f"🟠 IA AUTO CANARY escape: se habilita REAL por compuerta fuerte ({canary_escape_why})."
                                     )
                                 else:
-                                    agregar_evento(
-                                        f"🟡 IA AUTO en CANARY: REAL bloqueado temporalmente ({c_prog}/{c_tgt}, hit={c_hit:.1f}%)."
-                                    )
-                                    candidatos = []
+                                    # Fallback anti-deadlock: con progreso mínimo en canary,
+                                    # permitir 1 entrada controlada si la compuerta fuerte se sostiene.
+                                    fallback_ok = False
+                                    try:
+                                        if (c_prog >= max(3, int(c_tgt * 0.25))) and candidatos:
+                                            top = candidatos[0]
+                                            b_top = str(top[1])
+                                            p_top = float(top[3])
+                                            dgate_fb = dyn_gate if isinstance(dyn_gate, dict) else {}
+                                            conf_need_fb = int(dgate_fb.get("confirm_need", DYN_ROOF_CONFIRM_TICKS) or DYN_ROOF_CONFIRM_TICKS)
+                                            conf_ok_fb = int(dgate_fb.get("confirm_streak", 0) or 0) >= conf_need_fb
+                                            trig_ok_fb = bool(dgate_fb.get("trigger_ok", False))
+                                            floor_ok_fb = p_top >= float(_umbral_real_operativo_actual())
+                                            if b_top == str(dgate_fb.get("best_bot", "")) and conf_ok_fb and trig_ok_fb and floor_ok_fb:
+                                                fallback_ok = True
+                                    except Exception:
+                                        fallback_ok = False
+
+                                    if fallback_ok:
+                                        agregar_evento(
+                                            f"🟡 IA AUTO CANARY fallback: se permite 1 entrada controlada ({c_prog}/{c_tgt}, hit={c_hit:.1f}%)."
+                                        )
+                                        candidatos = candidatos[:1]
+                                    else:
+                                        agregar_evento(
+                                            f"🟡 IA AUTO en CANARY: REAL bloqueado temporalmente ({c_prog}/{c_tgt}, hit={c_hit:.1f}%)."
+                                        )
+                                        candidatos = []
                             elif not modelo_reliable:
                                 n_samples_live = int(meta_live.get("n_samples", meta_live.get("n", 0)) or 0)
                                 auc_live = float(meta_live.get("auc", 0.0) or 0.0)
