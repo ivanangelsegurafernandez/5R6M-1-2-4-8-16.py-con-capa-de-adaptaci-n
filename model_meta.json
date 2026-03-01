@@ -1,47 +1,50 @@
 {
-  "trained_at": "2026-02-28 11:02:45",
-  "rows_total": 547,
-  "rows_train": 356,
-  "rows_calib": 82,
-  "rows_test": 109,
-  "pos": 258,
-  "neg": 289,
-  "auc": 0.4655932203389831,
-  "f1": 0.0,
-  "brier": 0.2757340084241958,
-  "cv_auc": 0.47237191119100586,
-  "threshold": 0.5,
+  "trained_at": "2026-03-01 01:49:43",
+  "rows_total": 231,
+  "rows_train": 139,
+  "rows_calib": 46,
+  "rows_test": 46,
+  "pos": 122,
+  "neg": 109,
+  "auc": 0.5178571428571428,
+  "f1": 0.5217391304347826,
+  "brier": 0.256309356417471,
+  "cv_auc": null,
+  "threshold": 0.515,
   "reliable": false,
   "reliable_candidate": false,
-  "canary_mode": false,
-  "canary_started_at": null,
-  "canary_target_closed": 0,
-  "refresh_policy": "champion_direct",
+  "canary_mode": true,
+  "canary_started_at": "2026-03-01 01:49:43",
+  "canary_target_closed": 20,
+  "refresh_policy": "champion_canary",
   "calibration": "sigmoid",
-  "calib_precision_at_thr": null,
-  "calib_n_at_thr": 0,
-  "test_precision_at_thr": 0.0,
-  "test_n_at_thr": 1,
+  "calib_precision_at_thr": 0.6,
+  "calib_n_at_thr": 15,
+  "test_precision_at_thr": 0.6666666666666666,
+  "test_n_at_thr": 18,
   "feature_names": [
+    "rsi_14",
+    "breakout",
     "racha_actual",
-    "cruce_sma",
-    "rsi_reversion"
+    "payout",
+    "puntaje_estrategia",
+    "es_rebote"
   ],
   "label_col": "result_bin",
   "feature_health": {
     "rsi_9": {
-      "nunique": 502,
-      "dominance": 0.012797074954296161,
+      "nunique": 217,
+      "dominance": 0.012987012987012988,
       "status": "OK"
     },
     "rsi_14": {
-      "nunique": 491,
-      "dominance": 0.007312614259597806,
+      "nunique": 217,
+      "dominance": 0.012987012987012988,
       "status": "OK"
     },
     "sma_5": {
-      "nunique": 525,
-      "dominance": 0.005484460694698354,
+      "nunique": 225,
+      "dominance": 0.008658008658008658,
       "status": "OK"
     },
     "sma_spread": {
@@ -50,48 +53,48 @@
       "status": "ROTA"
     },
     "cruce_sma": {
-      "nunique": 529,
-      "dominance": 0.003656307129798903,
+      "nunique": 226,
+      "dominance": 0.008658008658008658,
       "status": "OK"
     },
     "breakout": {
-      "nunique": 525,
-      "dominance": 0.005484460694698354,
+      "nunique": 225,
+      "dominance": 0.008658008658008658,
       "status": "OK"
     },
     "rsi_reversion": {
-      "nunique": 502,
-      "dominance": 0.012797074954296161,
+      "nunique": 220,
+      "dominance": 0.012987012987012988,
       "status": "OK"
     },
     "racha_actual": {
-      "nunique": 15,
-      "dominance": 0.23948811700182815,
+      "nunique": 10,
+      "dominance": 0.2683982683982684,
       "status": "OK"
     },
     "payout": {
-      "nunique": 10,
-      "dominance": 0.5374771480804388,
+      "nunique": 6,
+      "dominance": 0.5584415584415584,
       "status": "OK"
     },
     "puntaje_estrategia": {
-      "nunique": 545,
-      "dominance": 0.003656307129798903,
+      "nunique": 231,
+      "dominance": 0.004329004329004329,
       "status": "OK"
     },
     "volatilidad": {
-      "nunique": 525,
-      "dominance": 0.005484460694698354,
+      "nunique": 225,
+      "dominance": 0.008658008658008658,
       "status": "OK"
     },
     "es_rebote": {
-      "nunique": 532,
-      "dominance": 0.007312614259597806,
+      "nunique": 227,
+      "dominance": 0.008658008658008658,
       "status": "OK"
     },
     "hora_bucket": {
-      "nunique": 11,
-      "dominance": 0.10786106032906764,
+      "nunique": 5,
+      "dominance": 0.2510822510822511,
       "status": "OK"
     }
   },
@@ -101,6 +104,6 @@
       "reason": "ROTA:nunique=1"
     }
   ],
-  "n_samples": 547,
-  "n": 547
+  "n_samples": 231,
+  "n": 231
 }
