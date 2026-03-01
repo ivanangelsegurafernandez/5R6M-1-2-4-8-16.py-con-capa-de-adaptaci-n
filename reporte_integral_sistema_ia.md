@@ -1,6 +1,6 @@
 # Reporte Integral de Salud IA
 
-Generado UTC: `2026-03-01T10:26:10.098704+00:00`
+Generado UTC: `2026-03-01T13:23:34.933424+00:00`
 
 ## 1) Calibración real de probabilidades
 - Señales cerradas: **0**
@@ -11,12 +11,12 @@ Generado UTC: `2026-03-01T10:26:10.098704+00:00`
 ## 2) Desalineación Prob IA vs hitrate por bot (last_n=40)
 | Bot | WR last40 (csv) | n señales IA | Hit last40 (señales) | Prob media last40 (señales) | Gap Prob-Hit señales | Gap Prob-WR csv | Muestra señales |
 |---|---:|---:|---:|---:|---:|---:|---|
-| fulll45 | 62.5% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
-| fulll46 | 60.0% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
-| fulll47 | 60.0% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
+| fulll45 | 55.0% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
+| fulll46 | 50.0% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
+| fulll47 | 47.5% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
 | fulll48 | 42.5% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
-| fulll49 | 57.5% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
-| fulll50 | 47.5% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
+| fulll49 | 47.5% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
+| fulll50 | 37.5% | 0 | N/A | N/A | N/A | N/A | BAJA(<5) |
 
 ## 3) Calibración por rangos de probabilidad
 | Rango Prob IA | n | Prob media | Winrate real | IC95% winrate | Gap (Prob-Winrate) |
@@ -58,7 +58,7 @@ Generado UTC: `2026-03-01T10:26:10.098704+00:00`
   - ❌ n_samples>=250
   - ❌ closed_signals>=80
   - ❌ reliable=true
-  - ❌ auc>=0.53
+  - ✅ auc>=0.53
 - Ready for full diagnosis: **False**
 
 ## 8) Qué falta corregir si no está “bien”

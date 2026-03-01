@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-03-01T10:26:10.098704+00:00",
+  "generated_at_utc": "2026-03-01T13:23:34.933424+00:00",
   "sources": {
     "signals_log": "ia_signals_log.csv",
     "diag_json": "diagnostico_pipeline_ia.json",
@@ -103,9 +103,9 @@
   },
   "bot_alignment": {
     "fulll45": {
-      "rows_closed": 2320,
-      "wr_all": 0.4982758620689655,
-      "wr_last_n": 0.625,
+      "rows_closed": 2377,
+      "wr_all": 0.4981068573832562,
+      "wr_last_n": 0.55,
       "last_n": 40,
       "signals_n": 0,
       "signals_min_for_gap": 5,
@@ -114,9 +114,9 @@
       "prob_vs_wr_gap_last_n": null
     },
     "fulll46": {
-      "rows_closed": 2323,
-      "wr_all": 0.5002152389151958,
-      "wr_last_n": 0.6,
+      "rows_closed": 2378,
+      "wr_all": 0.5004205214465938,
+      "wr_last_n": 0.5,
       "last_n": 40,
       "signals_n": 0,
       "signals_min_for_gap": 5,
@@ -125,9 +125,9 @@
       "prob_vs_wr_gap_last_n": null
     },
     "fulll47": {
-      "rows_closed": 2312,
-      "wr_all": 0.4995674740484429,
-      "wr_last_n": 0.6,
+      "rows_closed": 2367,
+      "wr_all": 0.49894381073088295,
+      "wr_last_n": 0.475,
       "last_n": 40,
       "signals_n": 0,
       "signals_min_for_gap": 5,
@@ -136,8 +136,8 @@
       "prob_vs_wr_gap_last_n": null
     },
     "fulll48": {
-      "rows_closed": 2326,
-      "wr_all": 0.5047291487532244,
+      "rows_closed": 2382,
+      "wr_all": 0.501679261125105,
       "wr_last_n": 0.425,
       "last_n": 40,
       "signals_n": 0,
@@ -147,9 +147,9 @@
       "prob_vs_wr_gap_last_n": null
     },
     "fulll49": {
-      "rows_closed": 2318,
-      "wr_all": 0.497411561691113,
-      "wr_last_n": 0.575,
+      "rows_closed": 2372,
+      "wr_all": 0.49620573355817876,
+      "wr_last_n": 0.475,
       "last_n": 40,
       "signals_n": 0,
       "signals_min_for_gap": 5,
@@ -158,9 +158,9 @@
       "prob_vs_wr_gap_last_n": null
     },
     "fulll50": {
-      "rows_closed": 2327,
-      "wr_all": 0.49935539321014183,
-      "wr_last_n": 0.475,
+      "rows_closed": 2383,
+      "wr_all": 0.49643306756189676,
+      "wr_last_n": 0.375,
       "last_n": 40,
       "signals_n": 0,
       "signals_min_for_gap": 5,
@@ -194,11 +194,11 @@
       "n_samples>=250": false,
       "closed_signals>=80": false,
       "reliable=true": false,
-      "auc>=0.53": false
+      "auc>=0.53": true
     },
-    "n_samples": 231,
+    "n_samples": 202,
     "closed_signals": 0,
-    "auc": 0.5178571428571428,
+    "auc": 0.6215538847117794,
     "reliable": false
   },
   "operational_guidance": {
