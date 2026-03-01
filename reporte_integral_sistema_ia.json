@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-02-28T00:03:22.245127+00:00",
+  "generated_at_utc": "2026-03-01T10:26:10.098704+00:00",
   "sources": {
     "signals_log": "ia_signals_log.csv",
     "diag_json": "diagnostico_pipeline_ia.json",
@@ -8,18 +8,18 @@
     "runtime_log": null
   },
   "calibration": {
-    "closed_signals": 5,
+    "closed_signals": 0,
     "precision_at_70": {
       "threshold": 0.7,
-      "n": 5,
-      "hits": 4,
-      "precision": 0.8
+      "n": 0,
+      "hits": 0,
+      "precision": null
     },
     "precision_at_85": {
       "threshold": 0.85,
-      "n": 5,
-      "hits": 4,
-      "precision": 0.8
+      "n": 0,
+      "hits": 0,
+      "precision": null
     },
     "by_probability_bin": [
       {
@@ -54,71 +54,31 @@
       },
       {
         "range": "80-90",
-        "n": 2,
-        "hits": 2,
-        "pred_mean": 0.8623997062998259,
-        "win_rate": 1.0,
-        "gap_pp": -0.13760029370017413,
-        "wr_ci_low": 0.34237195288961925,
-        "wr_ci_high": 1.0
+        "n": 0,
+        "hits": 0,
+        "pred_mean": null,
+        "win_rate": null,
+        "gap_pp": null,
+        "wr_ci_low": null,
+        "wr_ci_high": null
       },
       {
         "range": "90-100",
-        "n": 3,
-        "hits": 2,
-        "pred_mean": 0.9420621745038936,
-        "win_rate": 0.6666666666666666,
-        "gap_pp": 0.275395507837227,
-        "wr_ci_low": 0.20765495512648796,
-        "wr_ci_high": 0.9385096847238394
+        "n": 0,
+        "hits": 0,
+        "pred_mean": null,
+        "win_rate": null,
+        "gap_pp": null,
+        "wr_ci_low": null,
+        "wr_ci_high": null
       }
     ]
   },
   "adaptive_layer": {
-    "ewma_bot_health": {
-      "fulll48": {
-        "n": 1,
-        "hits": 0,
-        "wr_raw": 0.0,
-        "wr_ci_low": 0.0,
-        "wr_ci_high": 0.7934567085261071,
-        "mature_sample": false,
-        "ewma_hit": 0.0,
-        "ewma_false_high_penalty": 1.0,
-        "false_high_count": 1,
-        "health_score": 0.0,
-        "alpha": 0.25
-      },
-      "fulll50": {
-        "n": 3,
-        "hits": 3,
-        "wr_raw": 1.0,
-        "wr_ci_low": 0.43849391955098227,
-        "wr_ci_high": 1.0,
-        "mature_sample": false,
-        "ewma_hit": 1.0,
-        "ewma_false_high_penalty": 0.0,
-        "false_high_count": 0,
-        "health_score": 1.0,
-        "alpha": 0.25
-      },
-      "fulll47": {
-        "n": 1,
-        "hits": 1,
-        "wr_raw": 1.0,
-        "wr_ci_low": 0.2065432914738929,
-        "wr_ci_high": 1.0,
-        "mature_sample": false,
-        "ewma_hit": 1.0,
-        "ewma_false_high_penalty": 0.0,
-        "false_high_count": 0,
-        "health_score": 1.0,
-        "alpha": 0.25
-      }
-    },
+    "ewma_bot_health": {},
     "threshold_hint": {
       "base_threshold": 0.85,
-      "dynamic_threshold": 0.87,
+      "dynamic_threshold": 0.85,
       "global_health_score": null,
       "health_used_for_threshold": false,
       "mature_bots_for_health": 0,
@@ -127,12 +87,10 @@
       "min_closed_required": 20,
       "min_n90_required": 8,
       "min_mature_bots_for_health": 2,
-      "closed_signals": 5,
-      "bin_90_100_n": 3,
+      "closed_signals": 0,
+      "bin_90_100_n": 0,
       "reasons": [
-        "muestra_insuficiente_para_automatizar",
-        "sobreconfianza_alta_90_100",
-        "salud_ewma_solo_informativa_por_baja_muestra"
+        "muestra_insuficiente_para_automatizar"
       ]
     }
   },
@@ -145,9 +103,9 @@
   },
   "bot_alignment": {
     "fulll45": {
-      "rows_closed": 1704,
-      "wr_all": 0.4994131455399061,
-      "wr_last_n": 0.5,
+      "rows_closed": 2320,
+      "wr_all": 0.4982758620689655,
+      "wr_last_n": 0.625,
       "last_n": 40,
       "signals_n": 0,
       "signals_min_for_gap": 5,
@@ -156,9 +114,9 @@
       "prob_vs_wr_gap_last_n": null
     },
     "fulll46": {
-      "rows_closed": 1709,
-      "wr_all": 0.5038033937975425,
-      "wr_last_n": 0.475,
+      "rows_closed": 2323,
+      "wr_all": 0.5002152389151958,
+      "wr_last_n": 0.6,
       "last_n": 40,
       "signals_n": 0,
       "signals_min_for_gap": 5,
@@ -167,41 +125,31 @@
       "prob_vs_wr_gap_last_n": null
     },
     "fulll47": {
-      "rows_closed": 1695,
-      "wr_all": 0.49616519174041296,
-      "wr_last_n": 0.575,
+      "rows_closed": 2312,
+      "wr_all": 0.4995674740484429,
+      "wr_last_n": 0.6,
       "last_n": 40,
-      "n": 1,
-      "prob_mean_all": 0.906652561614388,
-      "hit_all": 1.0,
-      "prob_mean_last_n": 0.906652561614388,
-      "hit_last_n": 1.0,
-      "signals_n": 1,
+      "signals_n": 0,
       "signals_min_for_gap": 5,
       "signals_sample_ok": false,
       "prob_vs_hit_gap_last_n": null,
       "prob_vs_wr_gap_last_n": null
     },
     "fulll48": {
-      "rows_closed": 1709,
-      "wr_all": 0.502633118782914,
-      "wr_last_n": 0.525,
+      "rows_closed": 2326,
+      "wr_all": 0.5047291487532244,
+      "wr_last_n": 0.425,
       "last_n": 40,
-      "n": 1,
-      "prob_mean_all": 0.9505508941840072,
-      "hit_all": 0.0,
-      "prob_mean_last_n": 0.9505508941840072,
-      "hit_last_n": 0.0,
-      "signals_n": 1,
+      "signals_n": 0,
       "signals_min_for_gap": 5,
       "signals_sample_ok": false,
       "prob_vs_hit_gap_last_n": null,
       "prob_vs_wr_gap_last_n": null
     },
     "fulll49": {
-      "rows_closed": 1702,
-      "wr_all": 0.4970622796709753,
-      "wr_last_n": 0.675,
+      "rows_closed": 2318,
+      "wr_all": 0.497411561691113,
+      "wr_last_n": 0.575,
       "last_n": 40,
       "signals_n": 0,
       "signals_min_for_gap": 5,
@@ -210,16 +158,11 @@
       "prob_vs_wr_gap_last_n": null
     },
     "fulll50": {
-      "rows_closed": 1709,
-      "wr_all": 0.5055588063194851,
-      "wr_last_n": 0.6,
+      "rows_closed": 2327,
+      "wr_all": 0.49935539321014183,
+      "wr_last_n": 0.475,
       "last_n": 40,
-      "n": 3,
-      "prob_mean_all": 0.8979274934376459,
-      "hit_all": 1.0,
-      "prob_mean_last_n": 0.8979274934376459,
-      "hit_last_n": 1.0,
-      "signals_n": 3,
+      "signals_n": 0,
       "signals_min_for_gap": 5,
       "signals_sample_ok": false,
       "prob_vs_hit_gap_last_n": null,
@@ -233,45 +176,44 @@
   "token_real_state": {
     "real_sim_state": {},
     "last_promotions_tail": [
-      "2026-02-26 07:10:55 - Token REAL (inmediato) asignado a fulll47 (ciclo 3)",
-      "2026-02-26 07:14:59 - Token REAL (inmediato) asignado a fulll48 (ciclo 1)",
-      "2026-02-26 07:18:49 - Token REAL (inmediato) asignado a fulll49 (ciclo 1)",
-      "2026-02-26 07:21:47 - Token REAL (inmediato) asignado a fulll47 (ciclo 2)",
-      "2026-02-26 07:30:20 - Token REAL (inmediato) asignado a fulll45 (ciclo 1)",
-      "2026-02-26 07:34:48 - Token REAL (inmediato) asignado a fulll46 (ciclo 2)",
-      "2026-02-26 07:39:26 - Token REAL (inmediato) asignado a fulll47 (ciclo 3)",
       "2026-02-26 07:42:24 - Token REAL (inmediato) asignado a fulll50 (ciclo 1)",
       "2026-02-26 07:44:45 - Token REAL (inmediato) asignado a fulll48 (ciclo 2)",
-      "2026-02-26 07:47:40 - Token REAL (inmediato) asignado a fulll45 (ciclo 1)"
+      "2026-02-26 07:47:40 - Token REAL (inmediato) asignado a fulll45 (ciclo 1)",
+      "2026-02-28 23:10:11 - Token REAL (inmediato) asignado a fulll45 (ciclo 1)",
+      "2026-02-28 23:12:25 - Token REAL (inmediato) asignado a fulll45 (ciclo 1)",
+      "2026-02-28 23:24:57 - Token REAL (inmediato) asignado a fulll46 (ciclo 1)",
+      "2026-02-28 23:29:50 - Token REAL (inmediato) asignado a fulll49 (ciclo 2)",
+      "2026-02-28 23:32:04 - Token REAL (inmediato) asignado a fulll49 (ciclo 1)",
+      "2026-02-28 23:32:39 - Token REAL (inmediato) asignado a fulll45 (ciclo 1)",
+      "2026-03-01 01:33:01 - Token REAL (inmediato) asignado a fulll45 (ciclo 1)"
     ]
   },
   "readiness_recommendation": {
     "ready_for_full_diagnosis": false,
     "criteria": {
-      "n_samples>=250": true,
+      "n_samples>=250": false,
       "closed_signals>=80": false,
       "reliable=true": false,
       "auc>=0.53": false
     },
-    "n_samples": 3174,
-    "closed_signals": 5,
-    "auc": 0.49327093321662324,
+    "n_samples": 231,
+    "closed_signals": 0,
+    "auc": 0.5178571428571428,
     "reliable": false
   },
   "operational_guidance": {
     "official_gate_threshold": 0.85,
-    "shadow_suggested_threshold": 0.87,
+    "shadow_suggested_threshold": 0.85,
     "apply_shadow_only": true,
     "silent_bots": [
       "fulll45",
       "fulll46",
-      "fulll49"
-    ],
-    "low_sample_bots": [
       "fulll47",
       "fulll48",
+      "fulll49",
       "fulll50"
     ],
+    "low_sample_bots": [],
     "yellow_flags": [
       "decisiones_en_shadow_mode",
       "falta_runtime_log"
