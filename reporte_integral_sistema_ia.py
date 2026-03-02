@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import hashlib
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,7 @@ DIAG = ROOT / 'diagnostico_pipeline_ia.json'
 MODEL_META = ROOT / 'model_meta.json'
 REAL_STATE = ROOT / 'real_sim_state.json'
 PROMOS = ROOT / 'registro_promociones.txt'
+RUNTIME_DEFAULT = ROOT / 'runtime_log_ia.txt'
 BOT_FILES = [ROOT / f'registro_enriquecido_fulll{n}.csv' for n in (45, 46, 47, 48, 49, 50)]
 
 OUT_JSON = ROOT / 'reporte_integral_sistema_ia.json'
@@ -63,6 +65,21 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _snapshot_id(paths: list[Path]) -> str:
+    payload = []
+    for p in paths:
+        try:
+            if p.exists():
+                st = p.stat()
+                payload.append(f"{p.name}:{int(st.st_mtime)}:{st.st_size}")
+            else:
+                payload.append(f"{p.name}:missing")
+        except Exception:
+            payload.append(f"{p.name}:err")
+    raw = "|".join(payload).encode("utf-8", errors="ignore")
+    return hashlib.sha1(raw).hexdigest()[:12]
 
 
 def _closed_signals(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
@@ -270,6 +287,25 @@ def _adaptive_threshold_hint(calibration_bins: list[dict[str, Any]], ewma_health
 
 
 
+def _model_collapse_guard(meta: dict[str, Any]) -> dict[str, Any]:
+    feats = meta.get('feature_names', []) if isinstance(meta, dict) else []
+    try:
+        n_feats = len(feats) if isinstance(feats, list) else 0
+    except Exception:
+        n_feats = 0
+    auc = _safe_float((meta or {}).get('auc'))
+    reliable = bool((meta or {}).get('reliable', False))
+    collapsed = bool(n_feats > 0 and n_feats < 5)
+    should_block = bool(collapsed and ((auc is None) or (auc < 0.53) or (not reliable)))
+    return {
+        "feature_count": int(n_feats),
+        "collapsed_lt5": bool(collapsed),
+        "auc": auc,
+        "reliable": reliable,
+        "block_promotion": should_block,
+    }
+
+
 def _parse_runtime_log(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {'exists': False, 'path': str(path), 'errors': {}, 'why_no_counts': {}}
@@ -407,8 +443,11 @@ def build_report(runtime_log: Path | None) -> dict[str, Any]:
         'exists': False,
         'note': 'Pasa --runtime-log <archivo> para auditar auth/websocket/WHY-NO tick a tick.'
     }
-    if runtime_log is not None:
-        runtime = _parse_runtime_log(runtime_log)
+    runtime_used = runtime_log
+    if runtime_used is None and RUNTIME_DEFAULT.exists():
+        runtime_used = RUNTIME_DEFAULT
+    if runtime_used is not None:
+        runtime = _parse_runtime_log(runtime_used)
 
     promos_tail = []
     if PROMOS.exists():
@@ -420,14 +459,18 @@ def build_report(runtime_log: Path | None) -> dict[str, Any]:
     readiness = _readiness(meta, len(closed))
     guidance = _operational_guidance(bots, adaptive_hint, runtime)
 
+    report_id = _snapshot_id([LOG_SIGNALS, DIAG, MODEL_META, REAL_STATE, runtime_used or RUNTIME_DEFAULT])
+    collapse_guard = _model_collapse_guard(meta)
+
     report = {
+        'report_id': report_id,
         'generated_at_utc': _now_iso(),
         'sources': {
             'signals_log': str(LOG_SIGNALS),
             'diag_json': str(DIAG),
             'model_meta': str(MODEL_META),
             'real_state': str(REAL_STATE),
-            'runtime_log': str(runtime_log) if runtime_log else None,
+            'runtime_log': str(runtime_used) if runtime_used else None,
         },
         'calibration': {
             'closed_signals': len(closed),
@@ -453,6 +496,7 @@ def build_report(runtime_log: Path | None) -> dict[str, Any]:
             'last_promotions_tail': promos_tail,
         },
         'readiness_recommendation': readiness,
+        'model_health': collapse_guard,
         'operational_guidance': guidance,
     }
     return report
@@ -473,6 +517,8 @@ def render_md(rep: dict[str, Any]) -> str:
     lines.append('# Reporte Integral de Salud IA')
     lines.append('')
     lines.append(f"Generado UTC: `{rep['generated_at_utc']}`")
+    if rep.get('report_id'):
+        lines.append(f"Reporte ID: `{rep['report_id']}` (JSON/MD del mismo corte temporal)")
     lines.append('')
     lines.append('## 1) Calibración real de probabilidades')
     lines.append(f"- Señales cerradas: **{cal['closed_signals']}**")
@@ -529,7 +575,14 @@ def render_md(rep: dict[str, Any]) -> str:
     cp = guidance.get('next_checkpoint') or {}
     lines.append(f"- Próximo checkpoint: closed>={int(cp.get('closed_signals_target', THRESHOLD_HINT_MIN_CLOSED))}, n(90-100)>={int(cp.get('bin_90_100_target', THRESHOLD_HINT_MIN_BIN_90))}")
     lines.append('')
-    lines.append('## 6) Salud de ejecución (auth/ws/timeout)')
+    lines.append('## 6) Salud de modelo (anti-colapso de features)')
+    mh = rep.get('model_health', {}) or {}
+    lines.append(f"- Features activas del campeón: **{int(mh.get('feature_count', 0) or 0)}**")
+    lines.append(f"- Colapso (<5 features): **{'SI' if mh.get('collapsed_lt5') else 'NO'}**")
+    lines.append(f"- reliable: **{'SI' if mh.get('reliable') else 'NO'}** | AUC: **{mh.get('auc') if isinstance(mh.get('auc'), (int, float)) else 'N/A'}**")
+    lines.append(f"- Bloquear promoción por colapso: **{'SI' if mh.get('block_promotion') else 'NO'}**")
+
+    lines.append('## 7) Salud de ejecución (auth/ws/timeout)')
     rh = rep['runtime_health']
     if not rh.get('exists'):
         lines.append('- No auditado en este run (falta `--runtime-log`).')
@@ -542,7 +595,7 @@ def render_md(rep: dict[str, Any]) -> str:
             top = sorted(wh.items(), key=lambda x: x[1], reverse=True)[:8]
             lines.append('- WHY-NO más frecuentes: ' + ', '.join([f"{k}:{v}" for k, v in top]))
     lines.append('')
-    lines.append('## 7) Recomendación de cuándo correr este programa')
+    lines.append('## 8) Recomendación de cuándo correr este programa')
     lines.append('- **Recomendado siempre**: al iniciar sesión y luego cada 30-60 min.')
     lines.append('- **Corte de calidad fuerte**: después de cada bloque de +20 cierres nuevos.')
     lines.append('- **Punto mínimo para decisiones estructurales**:')
@@ -550,7 +603,7 @@ def render_md(rep: dict[str, Any]) -> str:
         lines.append(f"  - {'✅' if ok else '❌'} {k}")
     lines.append(f"- Ready for full diagnosis: **{rd['ready_for_full_diagnosis']}**")
     lines.append('')
-    lines.append('## 8) Qué falta corregir si no está “bien”')
+    lines.append('## 9) Qué falta corregir si no está “bien”')
     lines.append('- Nota: `Gap Prob-Hit señales` usa SOLO señales cerradas en `ia_signals_log.csv` y puede diferir de `WR last40 (csv)` del bot.')
     lines.append(f'- Gaps por bot se publican solo si `n señales IA >= {MIN_SIGNALS_FOR_BOT_GAP}` para evitar conclusiones con muestra mínima.')
     lines.append('- Si `precision@85` baja o n es pequeño: recalibrar/proteger compuerta.')
@@ -563,7 +616,7 @@ def render_md(rep: dict[str, Any]) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description='Reporte integral único de salud IA + operación')
-    ap.add_argument('--runtime-log', type=str, default='', help='Ruta a log de consola/runtime para auditar auth/ws y WHY-NO tick a tick.')
+    ap.add_argument('--runtime-log', type=str, default='', help='Ruta a log de consola/runtime para auditar auth/ws y WHY-NO tick a tick. Si se omite, usa runtime_log_ia.txt si existe.')
     ap.add_argument('--json-out', type=str, default=str(OUT_JSON))
     ap.add_argument('--md-out', type=str, default=str(OUT_MD))
     args = ap.parse_args()
