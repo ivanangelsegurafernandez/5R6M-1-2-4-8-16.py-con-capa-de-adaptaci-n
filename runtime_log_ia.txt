@@ -25871,3 +25871,32 @@
 [2026-03-01 17:42:28] 📉 Bloqueo dominante (120 ticks): ROOF:86% | UNREL58:7% | RELIABLE:2%
 [2026-03-01 17:42:28] 🏷️ Etiquetas bot: fulll47:C✅|O❌ · fulll50:C✅|O❌ · fulll45:C✅|O❌ · fulll48:C✅|O❌ · fulll49:C❌|O❌ · fulll46:C❌|O❌
 [2026-03-01 17:42:28] 🧭 GO/NO-GO REAL: NO-GO ❌ (n=322, closed=0, auc=0.601, rel=no, HG=RED) | why=closed<80,reliable=false,hard_guard=RED
+
+[2026-03-02 23:15:20] EVENTO: 🧪 Actualización manual: análisis patrón prometedor con drift (script analisis_patron_ganador.py).
+[2026-03-02 23:15:20] ANALISIS: === PATRÓN PROMETEDOR (NO DEFINITIVO) ===
+[2026-03-02 23:15:20] ANALISIS: Filas: 257 | WR base: 58.37%
+[2026-03-02 23:15:20] ANALISIS: Lectura: el patrón tiene edge, pero puede tener drift entre ventanas.
+[2026-03-02 23:15:20] ANALISIS: [1] Top reglas duales (exploratorio):
+[2026-03-02 23:15:20] ANALISIS: 01. rsi_9 >=Q3 AND cruce_sma >=Q3 | WR=93.10% | lift=+34.74% | n=29
+[2026-03-02 23:15:20] ANALISIS: 02. es_rebote >=Q3 AND cruce_sma >=Q3 | WR=84.62% | lift=+26.25% | n=26
+[2026-03-02 23:15:20] ANALISIS: 03. rsi_reversion >=Q3 AND cruce_sma >=Q3 | WR=84.00% | lift=+25.63% | n=25
+[2026-03-02 23:15:20] ANALISIS: 04. rsi_9 >=Q3 AND rsi_reversion >=Q3 | WR=80.00% | lift=+21.63% | n=40
+[2026-03-02 23:15:20] ANALISIS: 05. rsi_9 >=Q3 AND es_rebote >=Q3 | WR=79.49% | lift=+21.12% | n=39
+[2026-03-02 23:15:20] ANALISIS: 06. rsi_9 >=Q3 AND puntaje_estrategia >=Q3 | WR=77.78% | lift=+19.41% | n=36
+[2026-03-02 23:15:20] ANALISIS: 07. rsi_14 >=Q3 AND es_rebote >=Q3 | WR=74.07% | lift=+15.71% | n=27
+[2026-03-02 23:15:20] ANALISIS: 08. rsi_14 >=Q3 AND rsi_reversion >=Q3 | WR=73.33% | lift=+14.97% | n=30
+[2026-03-02 23:15:20] ANALISIS: 09. volatilidad <=Q1 AND racha_actual >=Q3 | WR=73.08% | lift=+14.71% | n=26
+[2026-03-02 23:15:20] ANALISIS: 10. racha_actual >=Q3 AND sma_spread <=Q1 | WR=73.08% | lift=+14.71% | n=26
+[2026-03-02 23:15:20] ANALISIS: [2] Pattern Score + veto tardío (persecución):
+[2026-03-02 23:15:20] ANALISIS: - Umbral score_final >= 6.0
+[2026-03-02 23:15:20] ANALISIS: - Seleccionadas: 53 | WR_sel=67.92% | lift=+9.56%
+[2026-03-02 23:15:20] ANALISIS: - score_final = pattern_score + bonus_dual - penalizacion_tardia
+[2026-03-02 23:15:20] ANALISIS: [3] Persistencia (drift check por 3 ventanas cronológicas):
+[2026-03-02 23:15:20] ANALISIS: - Ventana 1: n=85, base=65.88%, sel=20, WR_sel=90.00%, lift=+24.12%
+[2026-03-02 23:15:20] ANALISIS: - Ventana 2: n=86, base=53.49%, sel=20, WR_sel=50.00%, lift=-3.49%
+[2026-03-02 23:15:20] ANALISIS: - Ventana 3: n=86, base=55.81%, sel=18, WR_sel=50.00%, lift=-5.81%
+[2026-03-02 23:15:20] ANALISIS: Si el lift cae fuerte entre ventanas, el patrón está drifteando.
+[2026-03-02 23:15:20] ANALISIS: [4] Ranking híbrido (concepto operativo v1):
+[2026-03-02 23:15:20] ANALISIS: - score_final = prob_proxy + bonus_patron - penal_tardia - penal_crowding(proxy=0)
+[2026-03-02 23:15:20] ANALISIS: - En este CSV no existe prob_ia_oper/confirm/trigger/crowding, por eso se reporta versión proxy.
+[2026-03-02 23:15:20] ANALISIS: - Recomendación: integrar luego prob_ia_oper real + candados en el runtime principal.
