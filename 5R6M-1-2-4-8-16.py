@@ -10165,7 +10165,7 @@ def mostrar_panel():
             trig_ok = bool(trigger_ok_h)
             rel_ok = bool(reliable)
             can_ok = bool(canary_live)
-            classic_ok = bool(best_prob >= float(IA_ACTIVACION_REAL_THR))
+            classic_ok = bool(best_prob >= float(AUTO_REAL_THR_MIN))
 
             p_diag = float(best_prob)
             p_model = float(best_prob)
@@ -10180,7 +10180,7 @@ def mostrar_panel():
                 ("TRIG", trig_ok),
                 ("REL", rel_ok),
                 ("CAN", can_ok),
-                ("CLASS85", classic_ok),
+                (f"CLASS{int(round(AUTO_REAL_THR_MIN*100))}", classic_ok),
             ]
             funnel_txt = " | ".join([f"{k}{'✅' if v else '❌'}" for k, v in funnel_checks])
 
@@ -10191,7 +10191,7 @@ def mostrar_panel():
                 ("TRIGGER", trig_ok, 0.0, ""),
                 ("RELIABLE", rel_ok, 0.0, ""),
                 ("CANARY", can_ok, 0.0, ""),
-                ("CLASS85", classic_ok, max(0.0, float(IA_ACTIVACION_REAL_THR) - best_prob), "%"),
+                (f"CLASS{int(round(AUTO_REAL_THR_MIN*100))}", classic_ok, max(0.0, float(AUTO_REAL_THR_MIN) - best_prob), "%"),
             ]
             principal = next((b for b in bloqueos if not b[1]), None)
             if principal is None:
@@ -10223,7 +10223,7 @@ def mostrar_panel():
             decision_line = f"🧭 Decisión tick: P_diag={p_diag*100:.1f}% | P_model={p_model*100:.1f}% | P_oper={p_oper*100:.1f}% | modo={modo_score} | Bloqueo principal={principal_txt}"
             print(padding + Fore.CYAN + decision_line)
             _runtime_audit_append(decision_line)
-            print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | B-GATE={floor_gate_h*100:.1f}% | LIVE_MAX={live_peak_h*100:.1f}% (n={live_peak_n_h}) | CLASSIC={IA_ACTIVACION_REAL_THR*100:.0f}%")
+            print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | B-GATE={floor_gate_h*100:.1f}% | LIVE_MAX={live_peak_h*100:.1f}% (n={live_peak_n_h}) | CLASSIC={AUTO_REAL_THR_MIN*100:.0f}%")
             bloqueos_line = f"📉 Bloqueo dominante ({len(HUD_BLOQUEOS_RECIENTES)} ticks): {top_txt}"
             print(padding + Fore.CYAN + bloqueos_line)
             _runtime_audit_append(bloqueos_line)
@@ -10608,7 +10608,7 @@ def mostrar_panel():
             modo_base = modo_map.get(modo, (modo.upper() if modo != "off" else "OFF"))
 
             if modo != "off":
-                if confianza >= IA_ACTIVACION_REAL_THR:
+                if confianza >= AUTO_REAL_THR_MIN:
                     modo_color = Fore.GREEN
                 elif confianza >= 0.55:
                     modo_color = Fore.YELLOW
@@ -12464,7 +12464,7 @@ async def cargar_datos_bot(bot, token_actual):
                     elif resultado == "PÉRDIDA":
                         estado_bots[bot]["ia_fallos"] += 1
 
-                if prob_senal is not None and prob_senal >= float(IA_ACTIVACION_REAL_THR):
+                if prob_senal is not None and prob_senal >= float(AUTO_REAL_THR_MIN):
                     IA90_stats[bot]["n"] += 1
                     if resultado == "GANANCIA":
                         IA90_stats[bot]["ok"] += 1
