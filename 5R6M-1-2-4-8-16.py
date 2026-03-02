@@ -372,14 +372,30 @@ PATTERN_V1_PENAL_TARDIA = 2.0
 PATTERN_V1_REQUIRE_CONFIRM_FULL = True   # confirm=2/2
 PATTERN_V1_REQUIRE_TRIGGER_OK = True     # trigger_ok=sí
 PATTERN_V1_USE_HYBRID_RANKING = True     # score_final = prob + bonus - penalizaciones
+PATTERN_V1_LOG_COOLDOWN_S = 25.0
+PATTERN_V1_Q3_PROXY = {
+    "rsi_9": 64.0,
+    "rsi_reversion": 0.060,
+    "es_rebote": 0.090,
+    "puntaje_estrategia": 0.28,
+    "cruce_sma": 0.62,
+    "breakout": 0.20,
+    "payout": 0.9525,
+    "racha_actual": 2.0,
+}
+PATTERN_V1_Q2_PROXY = {
+    "volatilidad": 0.049,
+}
+PATTERN_V1_LAST_LOG_TS = {}
 
 
 def _validar_pattern_v1_config() -> None:
     """Sanitiza parámetros para evitar valores inválidos en runtime."""
-    global PATTERN_V1_SCORE_THR, PATTERN_V1_BONUS_DUAL, PATTERN_V1_PENAL_TARDIA
+    global PATTERN_V1_SCORE_THR, PATTERN_V1_BONUS_DUAL, PATTERN_V1_PENAL_TARDIA, PATTERN_V1_LOG_COOLDOWN_S
     PATTERN_V1_SCORE_THR = max(0.0, float(PATTERN_V1_SCORE_THR))
     PATTERN_V1_BONUS_DUAL = max(0.0, float(PATTERN_V1_BONUS_DUAL))
     PATTERN_V1_PENAL_TARDIA = max(0.0, float(PATTERN_V1_PENAL_TARDIA))
+    PATTERN_V1_LOG_COOLDOWN_S = max(5.0, float(PATTERN_V1_LOG_COOLDOWN_S))
 
 
 def resumen_plan_cambios_5r6m() -> list[str]:
@@ -432,6 +448,27 @@ def pattern_score_operativo_v1(features: dict, q3: dict, q2: dict) -> tuple[floa
 
     score_final = score + bonus_dual - penal_tardia
     return score, bonus_dual, penal_tardia, score_final
+
+
+def _pattern_v1_thresholds_proxy() -> tuple[dict, dict]:
+    """Umbrales proxy (Q3/Q2) para operar Pattern V1 sin dependencia externa."""
+    return dict(PATTERN_V1_Q3_PROXY), dict(PATTERN_V1_Q2_PROXY)
+
+
+def _pattern_v1_log_bot(bot: str, pattern_score: float, bonus_dual: float, penal_tardia: float, score_hibrido: float) -> None:
+    """Log por bot con cooldown para auditar impacto del Pattern V1."""
+    try:
+        ahora = time.time()
+        last = float(PATTERN_V1_LAST_LOG_TS.get(bot, 0.0) or 0.0)
+        if (ahora - last) < float(PATTERN_V1_LOG_COOLDOWN_S):
+            return
+        PATTERN_V1_LAST_LOG_TS[bot] = float(ahora)
+        agregar_evento(
+            f"🧠 PatternV1 {bot}: score={pattern_score:.1f} bonus={bonus_dual:.1f} "
+            f"penal={penal_tardia:.1f} score_hibrido={score_hibrido*100:.1f}%"
+        )
+    except Exception:
+        pass
 
 
 _validar_pattern_v1_config()
@@ -13155,11 +13192,36 @@ async def main():
                                     if sensor_plano_b:
                                         score_final = float(score_final) - float(IA_SENSOR_PLANO_SCORE_PENALTY)
 
+                                    # Pattern V1 (gradual): score híbrido detrás de flag.
+                                    pattern_score_b = 0.0
+                                    pattern_bonus_b = 0.0
+                                    pattern_penal_b = 0.0
+                                    score_hibrido = float(score_final)
+                                    if bool(PATTERN_V1_ENABLE) and bool(PATTERN_V1_USE_HYBRID_RANKING):
+                                        q3_proxy, q2_proxy = _pattern_v1_thresholds_proxy()
+                                        pattern_score_b, pattern_bonus_b, pattern_penal_b, pattern_total_b = pattern_score_operativo_v1(ctx, q3_proxy, q2_proxy)
+                                        if float(pattern_total_b) >= float(PATTERN_V1_SCORE_THR):
+                                            score_hibrido = float(score_final) + float(pattern_bonus_b) - float(pattern_penal_b)
+                                        else:
+                                            score_hibrido = float(score_final) - float(pattern_penal_b)
+                                        score_hibrido = float(max(0.0, min(1.0, score_hibrido)))
+                                        _pattern_v1_log_bot(
+                                            b,
+                                            pattern_score=float(pattern_score_b),
+                                            bonus_dual=float(pattern_bonus_b),
+                                            penal_tardia=float(pattern_penal_b),
+                                            score_hibrido=float(score_hibrido),
+                                        )
+
+                                    estado_bots[b]["ia_pattern_score"] = float(pattern_score_b)
+                                    estado_bots[b]["ia_pattern_bonus"] = float(pattern_bonus_b)
+                                    estado_bots[b]["ia_pattern_penal"] = float(pattern_penal_b)
+                                    estado_bots[b]["ia_score_hibrido"] = float(score_hibrido)
                                     estado_bots[b]["ia_regime_score"] = float(regime_score)
                                     estado_bots[b]["ia_evidence_n"] = int(ev_n)
                                     estado_bots[b]["ia_evidence_wr"] = float(ev_wr)
 
-                                    candidatos.append((float(score_final), b, float(p), float(p_post), float(regime_score), int(ev_n), float(ev_wr), float(ev_lb)))
+                                    candidatos.append((float(score_hibrido), b, float(p), float(p_post), float(regime_score), int(ev_n), float(ev_wr), float(ev_lb)))
                                 except Exception:
                                     continue
 
