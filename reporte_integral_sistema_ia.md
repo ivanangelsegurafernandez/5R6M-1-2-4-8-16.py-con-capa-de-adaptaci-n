@@ -1,6 +1,7 @@
 # Reporte Integral de Salud IA
 
-Generado UTC: `2026-02-27T23:55:21.506237+00:00`
+Generado UTC: `2026-03-01T14:04:52.059938+00:00`
+Reporte ID: `2db07d45c750` (JSON/MD del mismo corte temporal)
 
 ## 1) Calibración real de probabilidades
 - Señales cerradas: **12**
@@ -53,10 +54,15 @@ Generado UTC: `2026-02-27T23:55:21.506237+00:00`
 - Focos amarillos: decisiones_en_shadow_mode, falta_runtime_log
 - Próximo checkpoint: closed>=20, n(90-100)>=8
 
-## 6) Salud de ejecución (auth/ws/timeout)
+## 6) Salud de modelo (anti-colapso de features)
+- Features activas del campeón: **2**
+- Colapso (<5 features): **SI**
+- reliable: **NO** | AUC: **0.4904990842490842**
+- Bloquear promoción por colapso: **SI**
+## 7) Salud de ejecución (auth/ws/timeout)
 - No auditado en este run (falta `--runtime-log`).
 
-## 7) Recomendación de cuándo correr este programa
+## 8) Recomendación de cuándo correr este programa
 - **Recomendado siempre**: al iniciar sesión y luego cada 30-60 min.
 - **Corte de calidad fuerte**: después de cada bloque de +20 cierres nuevos.
 - **Punto mínimo para decisiones estructurales**:
@@ -66,7 +72,7 @@ Generado UTC: `2026-02-27T23:55:21.506237+00:00`
   - ❌ auc>=0.53
 - Ready for full diagnosis: **False**
 
-## 8) Qué falta corregir si no está “bien”
+## 9) Qué falta corregir si no está “bien”
 - Nota: `Gap Prob-Hit señales` usa SOLO señales cerradas en `ia_signals_log.csv` y puede diferir de `WR last40 (csv)` del bot.
 - Gaps por bot se publican solo si `n señales IA >= 5` para evitar conclusiones con muestra mínima.
 - Si `precision@85` baja o n es pequeño: recalibrar/proteger compuerta.
