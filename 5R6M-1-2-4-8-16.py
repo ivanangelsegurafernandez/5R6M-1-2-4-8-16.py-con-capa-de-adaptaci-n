@@ -198,8 +198,9 @@ IA_REDUNDANCY_SCORE_PENALTY = 0.03
 IA_SENSOR_PLANO_SCORE_PENALTY = 0.04
 IA_SUCESO_SCORE_WEIGHT = 0.08
 IA_OBSERVE_THR = 0.70
-AUTO_REAL_THR = IA_OBJETIVO_REAL_THR      # techo: mantener foco en acercarse al 70%
-AUTO_REAL_THR_MIN = IA_ACTIVACION_REAL_THR  # piso: permitir activación REAL desde 85%
+AUTO_REAL_THR = IA_OBJETIVO_REAL_THR      # techo dinámico objetivo (70%)
+AUTO_REAL_BASE_FLOOR = 0.70                 # nuevo: piso base del techo dinámico en 70%
+AUTO_REAL_THR_MIN = max(float(IA_ACTIVACION_REAL_THR), float(AUTO_REAL_BASE_FLOOR))
 AUTO_REAL_TOP_Q = 0.80    # cuantíl de probs históricas para calibrar el gate REAL
 AUTO_REAL_MARGIN = 0.01   # pequeño margen para evitar quedar fuera por décimas
 AUTO_REAL_LOG_MAX_ROWS = 300  # máximo de señales históricas usadas en la calibración
@@ -207,7 +208,7 @@ AUTO_REAL_LIVE_MIN_BOTS = 3   # mínimos bots con prob viva para calibración po
 
 # Umbral "operativo/UI" (señales actuales, semáforo, etc.)
 IA_METRIC_THRESHOLD = IA_ACTIVACION_REAL_THR
-# Modo clásico solicitado: activación REAL inmediata con prob IA >= 85%.
+# Modo clásico: activación REAL con umbral operativo vigente (hoy 65%, con techo dinámico base 70%).
 # Mantiene lock de un solo bot en REAL y ciclo martingala global en HUD.
 REAL_CLASSIC_GATE = True
 
@@ -11594,7 +11595,7 @@ def set_etapa(codigo, detalle_extra=None, anunciar=False):
 # Nueva constante para watchdog de REAL - Bajado para más reactividad
 REAL_TIMEOUT_S = 120  # 2 minutos sin actividad para aviso/rearme
 REAL_STUCK_FORCE_RELEASE_S = 90  # segundos extra tras aviso para liberar REAL si no hay cierre
-REAL_TRIGGER_MIN = IA_ACTIVACION_REAL_THR  # regla operativa: entrada REAL desde 85% o mayor
+REAL_TRIGGER_MIN = AUTO_REAL_THR_MIN  # alineado al piso base de 70% para arranque REAL
 
 # =========================================================
 # TECHO DINÁMICO + COMPUERTA REAL (anti-bug de activación baja)
@@ -11607,7 +11608,7 @@ DYN_ROOF_HOLD_TICKS = DYN_ROOF_BATCH_TICKS * DYN_ROOF_HOLD_BATCHES
 # Derretido lento del techo: -0.5pp por lote tras la paciencia
 DYN_ROOF_STEP = 0.005
 # Piso duro para REAL
-DYN_ROOF_FLOOR = IA_ACTIVACION_REAL_THR
+DYN_ROOF_FLOOR = AUTO_REAL_THR_MIN
 # Ventaja mínima del mejor vs segundo mejor
 DYN_ROOF_GAP = 0.03
 # Confirmación mínima (ticks consecutivos del MISMO bot)
