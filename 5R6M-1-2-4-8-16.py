@@ -9794,6 +9794,14 @@ def _persistencia_racha_verde(resultados):
     return p23, p34
 
 def _clasificar_regimen_racha(resultados):
+    """
+    Régimen observacional (solo contexto):
+      - R0: ruido / sin estructura
+      - R1: inicio (transición con aceleración)
+      - R2: continuidad moderada
+      - R3: continuidad fuerte
+      - R4: zona madura/sobreextendida (fatiga)
+    """
     rr = [x for x in list(resultados or []) if _es_verde_resultado(x) or _es_rojo_resultado(x)]
     if len(rr) < HUD_RACHA_MIN_MUESTRA:
         return "R0"
@@ -9803,11 +9811,28 @@ def _clasificar_regimen_racha(resultados):
     acel = d5 - d12
     color, largo = _racha_actual_color(rr)
     comp = _compactacion_verde(rr, 12)
+
+    if color == "V" and largo >= 6 and (d8 >= 0.65 or d12 >= 0.62):
+        return "R4"
+    if color == "V" and largo >= 4 and d8 >= 0.60 and comp >= 0.55 and acel >= -0.04:
+        return "R3"
     if color == "V" and largo >= 3 and d8 >= 0.55 and comp >= 0.45 and acel >= -0.05:
         return "R2"
     if acel >= 0.15 and d5 >= 0.45:
         return "R1"
     return "R0"
+
+def _edad_regimen_racha(resultados):
+    """Edad aproximada del régimen actual (t1/t2/t3/t4+)."""
+    try:
+        _c, largo = _racha_actual_color(resultados)
+        if largo <= 0:
+            return "t0"
+        if largo >= 4:
+            return "t4+"
+        return f"t{int(largo)}"
+    except Exception:
+        return "t0"
 
 def _fmt_prob_pct(p):
     if p is None:
@@ -10027,8 +10052,10 @@ def mostrar_panel():
             can_ok = bool(canary_live)
             classic_ok = bool(best_prob >= float(IA_ACTIVACION_REAL_THR))
 
+            p_diag = float(best_prob)
             p_model = float(best_prob)
             p_oper = float(best_prob) if (confirm_ok and trig_ok and (rel_ok or can_ok or auto_adapt_ok)) else 0.0
+            modo_score = "MODEL" if str(estado_bots.get(mejor[0], {}).get("modo_ia", "off")).lower() == "modelo" else str(estado_bots.get(mejor[0], {}).get("modo_ia", "off")).upper()
 
             funnel_checks = [
                 ("OBS70", obs_ok),
@@ -10078,7 +10105,7 @@ def mostrar_panel():
             print(padding + Fore.CYAN + f"🧪 Embudo: {funnel_txt}")
             if owner in BOT_NAMES:
                 principal_txt = f"{principal_txt} (solo nuevas entradas; REAL activo={owner})"
-            decision_line = f"🧭 Decisión tick: P_model={p_model*100:.1f}% | P_oper={p_oper*100:.1f}% | Bloqueo principal={principal_txt}"
+            decision_line = f"🧭 Decisión tick: P_diag={p_diag*100:.1f}% | P_model={p_model*100:.1f}% | P_oper={p_oper*100:.1f}% | modo={modo_score} | Bloqueo principal={principal_txt}"
             print(padding + Fore.CYAN + decision_line)
             _runtime_audit_append(decision_line)
             print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | B-GATE={floor_gate_h*100:.1f}% | LIVE_MAX={live_peak_h*100:.1f}% (n={live_peak_n_h}) | CLASSIC={IA_ACTIVACION_REAL_THR*100:.0f}%")
@@ -10209,8 +10236,10 @@ def mostrar_panel():
                 d12 = _densidad_verde(rr, 12)
                 acel = d8 - d12
                 lbl = ("V" if col == "V" else ("R" if col == "R" else "N"))
-                resumen_racha.append(f"{b}:{reg} {lbl}{lar} P23={_fmt_prob_pct(p23)} P34={_fmt_prob_pct(p34)}")
-                score = (1.8 if reg == "R2" else 1.0 if reg == "R1" else 0.0) + max(0.0, acel) + max(0.0, d8 - 0.5)
+                edad = _edad_regimen_racha(rr)
+                d4 = _densidad_verde(rr, 4)
+                resumen_racha.append(f"{b}:{reg}@{edad} {lbl}{lar} d4={d4*100:.0f}% d8={d8*100:.0f}% P23={_fmt_prob_pct(p23)} P34={_fmt_prob_pct(p34)}")
+                score = (2.6 if reg == "R3" else 2.1 if reg == "R2" else 1.0 if reg == "R1" else 0.4 if reg == "R4" else 0.0) + max(0.0, acel) + max(0.0, d8 - 0.5)
                 score_racha.append((b, score, reg, lar, acel))
 
             if resumen_racha:
