@@ -198,8 +198,9 @@ IA_REDUNDANCY_SCORE_PENALTY = 0.03
 IA_SENSOR_PLANO_SCORE_PENALTY = 0.04
 IA_SUCESO_SCORE_WEIGHT = 0.08
 IA_OBSERVE_THR = 0.70
-AUTO_REAL_THR = IA_OBJETIVO_REAL_THR      # techo: mantener foco en acercarse al 70%
-AUTO_REAL_THR_MIN = IA_ACTIVACION_REAL_THR  # piso: permitir activación REAL desde 85%
+AUTO_REAL_THR = IA_OBJETIVO_REAL_THR      # techo dinámico objetivo (70%)
+AUTO_REAL_BASE_FLOOR = 0.70                 # nuevo: piso base del techo dinámico en 70%
+AUTO_REAL_THR_MIN = max(float(IA_ACTIVACION_REAL_THR), float(AUTO_REAL_BASE_FLOOR))
 AUTO_REAL_TOP_Q = 0.80    # cuantíl de probs históricas para calibrar el gate REAL
 AUTO_REAL_MARGIN = 0.01   # pequeño margen para evitar quedar fuera por décimas
 AUTO_REAL_LOG_MAX_ROWS = 300  # máximo de señales históricas usadas en la calibración
@@ -207,7 +208,7 @@ AUTO_REAL_LIVE_MIN_BOTS = 3   # mínimos bots con prob viva para calibración po
 
 # Umbral "operativo/UI" (señales actuales, semáforo, etc.)
 IA_METRIC_THRESHOLD = IA_ACTIVACION_REAL_THR
-# Modo clásico solicitado: activación REAL inmediata con prob IA >= 85%.
+# Modo clásico: activación REAL con umbral operativo vigente (hoy 65%, con techo dinámico base 70%).
 # Mantiene lock de un solo bot en REAL y ciclo martingala global en HUD.
 REAL_CLASSIC_GATE = True
 
@@ -359,6 +360,120 @@ META_ACEPTADA = False
 MODAL_ACTIVO = False
 sonido_disparado = False
 # === FIN BLOQUE 2 ===
+
+# === BLOQUE 2.5 — PLAN OPERATIVO PATRÓN V1 (RESUMEN EJECUTIVO) ===
+# IMPORTANTE:
+# - Este bloque NO reemplaza todavía la lógica de entrada actual.
+# - Sirve para dejar la integración preparada y revisable.
+# - Los candados existentes (hard_guard/confirm/trigger/roof) se mantienen.
+PATTERN_V1_ENABLE = True
+PATTERN_V1_SCORE_THR = 6.0
+PATTERN_V1_BONUS_DUAL = 1.0
+PATTERN_V1_PENAL_TARDIA = 2.0
+PATTERN_V1_REQUIRE_CONFIRM_FULL = True   # confirm=2/2
+PATTERN_V1_REQUIRE_TRIGGER_OK = True     # trigger_ok=sí
+PATTERN_V1_USE_HYBRID_RANKING = True     # score_final = prob + bonus - penalizaciones
+PATTERN_V1_LOG_COOLDOWN_S = 25.0
+PATTERN_V1_Q3_PROXY = {
+    "rsi_9": 64.0,
+    "rsi_reversion": 0.060,
+    "es_rebote": 0.090,
+    "puntaje_estrategia": 0.28,
+    "cruce_sma": 0.62,
+    "breakout": 0.20,
+    "payout": 0.9525,
+    "racha_actual": 2.0,
+}
+PATTERN_V1_Q2_PROXY = {
+    "volatilidad": 0.049,
+}
+PATTERN_V1_LAST_LOG_TS = {}
+
+
+def _validar_pattern_v1_config() -> None:
+    """Sanitiza parámetros para evitar valores inválidos en runtime."""
+    global PATTERN_V1_SCORE_THR, PATTERN_V1_BONUS_DUAL, PATTERN_V1_PENAL_TARDIA, PATTERN_V1_LOG_COOLDOWN_S
+    PATTERN_V1_SCORE_THR = max(0.0, float(PATTERN_V1_SCORE_THR))
+    PATTERN_V1_BONUS_DUAL = max(0.0, float(PATTERN_V1_BONUS_DUAL))
+    PATTERN_V1_PENAL_TARDIA = max(0.0, float(PATTERN_V1_PENAL_TARDIA))
+    PATTERN_V1_LOG_COOLDOWN_S = max(5.0, float(PATTERN_V1_LOG_COOLDOWN_S))
+
+
+def resumen_plan_cambios_5r6m() -> list[str]:
+    """Resumen corto de cambios planificados en 5R6M-1-2-4-8-16.py."""
+    return [
+        "1) Añadir Pattern Score compuesto (señales duales + estructura técnica).",
+        "2) Añadir veto tardío para evitar perseguir rachas verdes iniciadas.",
+        "3) Separar detección de oportunidad vs permiso final de entrada.",
+        "4) Mantener candados existentes (hard_guard, confirm, trigger, roof).",
+        "5) Usar ranking híbrido: prob_ia_oper + bonus_patron - penal_tardia - crowding.",
+        "6) Medir drift por ventanas y degradar score cuando no hay persistencia.",
+    ]
+
+
+def pattern_score_operativo_v1(features: dict, q3: dict, q2: dict) -> tuple[float, float, float, float]:
+    """Score proxy para integración gradual (sin reemplazar la decisión vigente).
+
+    Retorna: (score, bonus_dual, penal_tardia, score_final)
+    """
+    score = 0.0
+    if features.get("rsi_9", 0.0) >= q3.get("rsi_9", 1e9):
+        score += 2.0
+    if features.get("rsi_reversion", 0.0) >= q3.get("rsi_reversion", 1e9):
+        score += 2.0
+    if features.get("es_rebote", 0.0) >= q3.get("es_rebote", 1e9):
+        score += 2.0
+    if features.get("puntaje_estrategia", 0.0) >= q3.get("puntaje_estrategia", 1e9):
+        score += 1.0
+    if features.get("cruce_sma", 0.0) >= q3.get("cruce_sma", 1e9):
+        score += 1.0
+    if features.get("breakout", 0.0) >= q3.get("breakout", 1e9):
+        score += 1.0
+    if features.get("payout", 0.0) >= q3.get("payout", 1e9):
+        score += 1.0
+    if features.get("volatilidad", 1e9) <= q2.get("volatilidad", -1e9):
+        score += 1.0
+
+    dual = (
+        features.get("rsi_reversion", 0.0) >= q3.get("rsi_reversion", 1e9)
+        or features.get("es_rebote", 0.0) >= q3.get("es_rebote", 1e9)
+    )
+    bonus_dual = (
+        PATTERN_V1_BONUS_DUAL
+        if dual and features.get("rsi_9", 0.0) >= q3.get("rsi_9", 1e9)
+        else 0.0
+    )
+    penal_tardia = 0.0
+    if features.get("racha_actual", 0.0) >= q3.get("racha_actual", 1e9) and not dual:
+        penal_tardia = PATTERN_V1_PENAL_TARDIA
+
+    score_final = score + bonus_dual - penal_tardia
+    return score, bonus_dual, penal_tardia, score_final
+
+
+def _pattern_v1_thresholds_proxy() -> tuple[dict, dict]:
+    """Umbrales proxy (Q3/Q2) para operar Pattern V1 sin dependencia externa."""
+    return dict(PATTERN_V1_Q3_PROXY), dict(PATTERN_V1_Q2_PROXY)
+
+
+def _pattern_v1_log_bot(bot: str, pattern_score: float, bonus_dual: float, penal_tardia: float, score_hibrido: float) -> None:
+    """Log por bot con cooldown para auditar impacto del Pattern V1."""
+    try:
+        ahora = time.time()
+        last = float(PATTERN_V1_LAST_LOG_TS.get(bot, 0.0) or 0.0)
+        if (ahora - last) < float(PATTERN_V1_LOG_COOLDOWN_S):
+            return
+        PATTERN_V1_LAST_LOG_TS[bot] = float(ahora)
+        agregar_evento(
+            f"🧠 PatternV1 {bot}: score={pattern_score:.1f} bonus={bonus_dual:.1f} "
+            f"penal={penal_tardia:.1f} score_hibrido={score_hibrido*100:.1f}%"
+        )
+    except Exception:
+        pass
+
+
+_validar_pattern_v1_config()
+
 
 # === BLOQUE 3 — CONFIGURACIÓN DE REENTRENAMIENTO Y MODOS IA ===
 # === CONFIGURACIÓN DE REENTRENAMIENTO ===
@@ -10050,7 +10165,7 @@ def mostrar_panel():
             trig_ok = bool(trigger_ok_h)
             rel_ok = bool(reliable)
             can_ok = bool(canary_live)
-            classic_ok = bool(best_prob >= float(IA_ACTIVACION_REAL_THR))
+            classic_ok = bool(best_prob >= float(AUTO_REAL_THR_MIN))
 
             p_diag = float(best_prob)
             p_model = float(best_prob)
@@ -10065,7 +10180,7 @@ def mostrar_panel():
                 ("TRIG", trig_ok),
                 ("REL", rel_ok),
                 ("CAN", can_ok),
-                ("CLASS85", classic_ok),
+                (f"CLASS{int(round(AUTO_REAL_THR_MIN*100))}", classic_ok),
             ]
             funnel_txt = " | ".join([f"{k}{'✅' if v else '❌'}" for k, v in funnel_checks])
 
@@ -10076,7 +10191,7 @@ def mostrar_panel():
                 ("TRIGGER", trig_ok, 0.0, ""),
                 ("RELIABLE", rel_ok, 0.0, ""),
                 ("CANARY", can_ok, 0.0, ""),
-                ("CLASS85", classic_ok, max(0.0, float(IA_ACTIVACION_REAL_THR) - best_prob), "%"),
+                (f"CLASS{int(round(AUTO_REAL_THR_MIN*100))}", classic_ok, max(0.0, float(AUTO_REAL_THR_MIN) - best_prob), "%"),
             ]
             principal = next((b for b in bloqueos if not b[1]), None)
             if principal is None:
@@ -10108,7 +10223,7 @@ def mostrar_panel():
             decision_line = f"🧭 Decisión tick: P_diag={p_diag*100:.1f}% | P_model={p_model*100:.1f}% | P_oper={p_oper*100:.1f}% | modo={modo_score} | Bloqueo principal={principal_txt}"
             print(padding + Fore.CYAN + decision_line)
             _runtime_audit_append(decision_line)
-            print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | B-GATE={floor_gate_h*100:.1f}% | LIVE_MAX={live_peak_h*100:.1f}% (n={live_peak_n_h}) | CLASSIC={IA_ACTIVACION_REAL_THR*100:.0f}%")
+            print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | B-GATE={floor_gate_h*100:.1f}% | LIVE_MAX={live_peak_h*100:.1f}% (n={live_peak_n_h}) | CLASSIC={AUTO_REAL_THR_MIN*100:.0f}%")
             bloqueos_line = f"📉 Bloqueo dominante ({len(HUD_BLOQUEOS_RECIENTES)} ticks): {top_txt}"
             print(padding + Fore.CYAN + bloqueos_line)
             _runtime_audit_append(bloqueos_line)
@@ -10493,7 +10608,7 @@ def mostrar_panel():
             modo_base = modo_map.get(modo, (modo.upper() if modo != "off" else "OFF"))
 
             if modo != "off":
-                if confianza >= IA_ACTIVACION_REAL_THR:
+                if confianza >= AUTO_REAL_THR_MIN:
                     modo_color = Fore.GREEN
                 elif confianza >= 0.55:
                     modo_color = Fore.YELLOW
@@ -11480,7 +11595,7 @@ def set_etapa(codigo, detalle_extra=None, anunciar=False):
 # Nueva constante para watchdog de REAL - Bajado para más reactividad
 REAL_TIMEOUT_S = 120  # 2 minutos sin actividad para aviso/rearme
 REAL_STUCK_FORCE_RELEASE_S = 90  # segundos extra tras aviso para liberar REAL si no hay cierre
-REAL_TRIGGER_MIN = IA_ACTIVACION_REAL_THR  # regla operativa: entrada REAL desde 85% o mayor
+REAL_TRIGGER_MIN = AUTO_REAL_THR_MIN  # alineado al piso base de 70% para arranque REAL
 
 # =========================================================
 # TECHO DINÁMICO + COMPUERTA REAL (anti-bug de activación baja)
@@ -11493,7 +11608,7 @@ DYN_ROOF_HOLD_TICKS = DYN_ROOF_BATCH_TICKS * DYN_ROOF_HOLD_BATCHES
 # Derretido lento del techo: -0.5pp por lote tras la paciencia
 DYN_ROOF_STEP = 0.005
 # Piso duro para REAL
-DYN_ROOF_FLOOR = IA_ACTIVACION_REAL_THR
+DYN_ROOF_FLOOR = AUTO_REAL_THR_MIN
 # Ventaja mínima del mejor vs segundo mejor
 DYN_ROOF_GAP = 0.03
 # Confirmación mínima (ticks consecutivos del MISMO bot)
@@ -12349,7 +12464,7 @@ async def cargar_datos_bot(bot, token_actual):
                     elif resultado == "PÉRDIDA":
                         estado_bots[bot]["ia_fallos"] += 1
 
-                if prob_senal is not None and prob_senal >= float(IA_ACTIVACION_REAL_THR):
+                if prob_senal is not None and prob_senal >= float(AUTO_REAL_THR_MIN):
                     IA90_stats[bot]["n"] += 1
                     if resultado == "GANANCIA":
                         IA90_stats[bot]["ok"] += 1
@@ -13078,11 +13193,36 @@ async def main():
                                     if sensor_plano_b:
                                         score_final = float(score_final) - float(IA_SENSOR_PLANO_SCORE_PENALTY)
 
+                                    # Pattern V1 (gradual): score híbrido detrás de flag.
+                                    pattern_score_b = 0.0
+                                    pattern_bonus_b = 0.0
+                                    pattern_penal_b = 0.0
+                                    score_hibrido = float(score_final)
+                                    if bool(PATTERN_V1_ENABLE) and bool(PATTERN_V1_USE_HYBRID_RANKING):
+                                        q3_proxy, q2_proxy = _pattern_v1_thresholds_proxy()
+                                        pattern_score_b, pattern_bonus_b, pattern_penal_b, pattern_total_b = pattern_score_operativo_v1(ctx, q3_proxy, q2_proxy)
+                                        if float(pattern_total_b) >= float(PATTERN_V1_SCORE_THR):
+                                            score_hibrido = float(score_final) + float(pattern_bonus_b) - float(pattern_penal_b)
+                                        else:
+                                            score_hibrido = float(score_final) - float(pattern_penal_b)
+                                        score_hibrido = float(max(0.0, min(1.0, score_hibrido)))
+                                        _pattern_v1_log_bot(
+                                            b,
+                                            pattern_score=float(pattern_score_b),
+                                            bonus_dual=float(pattern_bonus_b),
+                                            penal_tardia=float(pattern_penal_b),
+                                            score_hibrido=float(score_hibrido),
+                                        )
+
+                                    estado_bots[b]["ia_pattern_score"] = float(pattern_score_b)
+                                    estado_bots[b]["ia_pattern_bonus"] = float(pattern_bonus_b)
+                                    estado_bots[b]["ia_pattern_penal"] = float(pattern_penal_b)
+                                    estado_bots[b]["ia_score_hibrido"] = float(score_hibrido)
                                     estado_bots[b]["ia_regime_score"] = float(regime_score)
                                     estado_bots[b]["ia_evidence_n"] = int(ev_n)
                                     estado_bots[b]["ia_evidence_wr"] = float(ev_wr)
 
-                                    candidatos.append((float(score_final), b, float(p), float(p_post), float(regime_score), int(ev_n), float(ev_wr), float(ev_lb)))
+                                    candidatos.append((float(score_hibrido), b, float(p), float(p_post), float(regime_score), int(ev_n), float(ev_wr), float(ev_lb)))
                                 except Exception:
                                     continue
 
