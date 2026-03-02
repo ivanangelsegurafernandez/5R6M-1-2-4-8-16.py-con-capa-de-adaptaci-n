@@ -172,8 +172,8 @@ HUD_VISIBLE = True       # Para ocultarlo con tecla
 
 # --- Objetivos / umbrales globales de IA ---
 IA_OBJETIVO_REAL_THR = 0.70   # objetivo de calidad REAL (meta: 70% aprox)
-IA_ACTIVACION_REAL_THR = 0.70 # mínimo operativo para activar señal REAL (piso inicial solicitado)
-IA_ACTIVACION_REAL_THR_POST_N15 = 0.70  # con piso inicial en 70%, post-n15 mantiene ese mismo piso base
+IA_ACTIVACION_REAL_THR = 0.65 # perfil de arranque: habilitar REAL desde 65% con candados activos
+IA_ACTIVACION_REAL_THR_POST_N15 = 0.65  # post-n15 alineado al piso operativo de arranque
 # En modo unreliable (reliable=false), permitir piso post-n15 más realista para no congelar entradas.
 IA_ACTIVACION_REAL_THR_POST_N15_UNREL = 0.60
 IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES = 300
@@ -238,7 +238,7 @@ IA_HARD_GUARD_RED_MIN_AUC = 0.52
 IA_HARD_GUARD_GREEN_MIN_AUC = 0.55
 IA_HARD_GUARD_MIN_FEATURES_RED = 5
 IA_HARD_GUARD_MIN_FEATURES_GREEN = 6
-IA_HARD_GUARD_RED_CAP = 0.58
+IA_HARD_GUARD_RED_CAP = 0.66
 IA_HARD_GUARD_AMBER_CAP = 0.66
 IA_HARD_GUARD_SEVERE_GAP_MIN_N = 10
 IA_HARD_GUARD_SEVERE_OVERCONF_GAP_PP = 0.25
@@ -11493,12 +11493,12 @@ DYN_ROOF_HOLD_TICKS = DYN_ROOF_BATCH_TICKS * DYN_ROOF_HOLD_BATCHES
 # Derretido lento del techo: -0.5pp por lote tras la paciencia
 DYN_ROOF_STEP = 0.005
 # Piso duro para REAL
-DYN_ROOF_FLOOR = 0.70
+DYN_ROOF_FLOOR = IA_ACTIVACION_REAL_THR
 # Ventaja mínima del mejor vs segundo mejor
 DYN_ROOF_GAP = 0.03
 # Confirmación mínima (ticks consecutivos del MISMO bot)
 DYN_ROOF_CONFIRM_TICKS = 2
-DYN_ROOF_TRIGGER_FORCE_STREAK = 4
+DYN_ROOF_TRIGGER_FORCE_STREAK = 2
 DYN_ROOF_TRIGGER_FORCE_MARGIN = 0.005
 # Tolerancia para considerar "tocado" el techo (near-roof)
 DYN_ROOF_NEAR_TOL = 0.005
