@@ -361,8 +361,10 @@ sonido_disparado = False
 # === FIN BLOQUE 2 ===
 
 # === BLOQUE 2.5 — PLAN OPERATIVO PATRÓN V1 (RESUMEN EJECUTIVO) ===
-# Este bloque documenta, dentro del propio runtime, el plan de integración
-# del hallazgo "patrón prometedor con drift" sin romper candados actuales.
+# IMPORTANTE:
+# - Este bloque NO reemplaza todavía la lógica de entrada actual.
+# - Sirve para dejar la integración preparada y revisable.
+# - Los candados existentes (hard_guard/confirm/trigger/roof) se mantienen.
 PATTERN_V1_ENABLE = True
 PATTERN_V1_SCORE_THR = 6.0
 PATTERN_V1_BONUS_DUAL = 1.0
@@ -372,11 +374,16 @@ PATTERN_V1_REQUIRE_TRIGGER_OK = True     # trigger_ok=sí
 PATTERN_V1_USE_HYBRID_RANKING = True     # score_final = prob + bonus - penalizaciones
 
 
-def resumen_plan_cambios_5r6m() -> list:
-    """Resumen corto de cambios planificados en 5R6M-1-2-4-8-16.py.
+def _validar_pattern_v1_config() -> None:
+    """Sanitiza parámetros para evitar valores inválidos en runtime."""
+    global PATTERN_V1_SCORE_THR, PATTERN_V1_BONUS_DUAL, PATTERN_V1_PENAL_TARDIA
+    PATTERN_V1_SCORE_THR = max(0.0, float(PATTERN_V1_SCORE_THR))
+    PATTERN_V1_BONUS_DUAL = max(0.0, float(PATTERN_V1_BONUS_DUAL))
+    PATTERN_V1_PENAL_TARDIA = max(0.0, float(PATTERN_V1_PENAL_TARDIA))
 
-    Objetivo: convertir el patrón exploratorio en filtro operativo gradual.
-    """
+
+def resumen_plan_cambios_5r6m() -> list[str]:
+    """Resumen corto de cambios planificados en 5R6M-1-2-4-8-16.py."""
     return [
         "1) Añadir Pattern Score compuesto (señales duales + estructura técnica).",
         "2) Añadir veto tardío para evitar perseguir rachas verdes iniciadas.",
@@ -387,40 +394,47 @@ def resumen_plan_cambios_5r6m() -> list:
     ]
 
 
-def pattern_score_operativo_v1(features: dict, q3: dict, q2: dict) -> tuple:
-    """Score proxy para integración gradual (sin reemplazar lógica actual).
+def pattern_score_operativo_v1(features: dict, q3: dict, q2: dict) -> tuple[float, float, float, float]:
+    """Score proxy para integración gradual (sin reemplazar la decisión vigente).
 
     Retorna: (score, bonus_dual, penal_tardia, score_final)
     """
     score = 0.0
-    if features.get('rsi_9', 0.0) >= q3.get('rsi_9', 1e9):
+    if features.get("rsi_9", 0.0) >= q3.get("rsi_9", 1e9):
         score += 2.0
-    if features.get('rsi_reversion', 0.0) >= q3.get('rsi_reversion', 1e9):
+    if features.get("rsi_reversion", 0.0) >= q3.get("rsi_reversion", 1e9):
         score += 2.0
-    if features.get('es_rebote', 0.0) >= q3.get('es_rebote', 1e9):
+    if features.get("es_rebote", 0.0) >= q3.get("es_rebote", 1e9):
         score += 2.0
-    if features.get('puntaje_estrategia', 0.0) >= q3.get('puntaje_estrategia', 1e9):
+    if features.get("puntaje_estrategia", 0.0) >= q3.get("puntaje_estrategia", 1e9):
         score += 1.0
-    if features.get('cruce_sma', 0.0) >= q3.get('cruce_sma', 1e9):
+    if features.get("cruce_sma", 0.0) >= q3.get("cruce_sma", 1e9):
         score += 1.0
-    if features.get('breakout', 0.0) >= q3.get('breakout', 1e9):
+    if features.get("breakout", 0.0) >= q3.get("breakout", 1e9):
         score += 1.0
-    if features.get('payout', 0.0) >= q3.get('payout', 1e9):
+    if features.get("payout", 0.0) >= q3.get("payout", 1e9):
         score += 1.0
-    if features.get('volatilidad', 1e9) <= q2.get('volatilidad', -1e9):
+    if features.get("volatilidad", 1e9) <= q2.get("volatilidad", -1e9):
         score += 1.0
 
     dual = (
-        features.get('rsi_reversion', 0.0) >= q3.get('rsi_reversion', 1e9)
-        or features.get('es_rebote', 0.0) >= q3.get('es_rebote', 1e9)
+        features.get("rsi_reversion", 0.0) >= q3.get("rsi_reversion", 1e9)
+        or features.get("es_rebote", 0.0) >= q3.get("es_rebote", 1e9)
     )
-    bonus_dual = PATTERN_V1_BONUS_DUAL if dual and features.get('rsi_9', 0.0) >= q3.get('rsi_9', 1e9) else 0.0
+    bonus_dual = (
+        PATTERN_V1_BONUS_DUAL
+        if dual and features.get("rsi_9", 0.0) >= q3.get("rsi_9", 1e9)
+        else 0.0
+    )
     penal_tardia = 0.0
-    if features.get('racha_actual', 0.0) >= q3.get('racha_actual', 1e9) and not dual:
+    if features.get("racha_actual", 0.0) >= q3.get("racha_actual", 1e9) and not dual:
         penal_tardia = PATTERN_V1_PENAL_TARDIA
 
-    final = score + bonus_dual - penal_tardia
-    return score, bonus_dual, penal_tardia, final
+    score_final = score + bonus_dual - penal_tardia
+    return score, bonus_dual, penal_tardia, score_final
+
+
+_validar_pattern_v1_config()
 
 
 # === BLOQUE 3 — CONFIGURACIÓN DE REENTRENAMIENTO Y MODOS IA ===
