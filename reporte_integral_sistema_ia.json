@@ -1,5 +1,6 @@
 {
-  "generated_at_utc": "2026-02-28T00:03:22.245127+00:00",
+  "report_id": "2db07d45c750",
+  "generated_at_utc": "2026-03-01T14:04:52.059938+00:00",
   "sources": {
     "signals_log": "ia_signals_log.csv",
     "diag_json": "diagnostico_pipeline_ia.json",
@@ -8,18 +9,18 @@
     "runtime_log": null
   },
   "calibration": {
-    "closed_signals": 5,
+    "closed_signals": 12,
     "precision_at_70": {
       "threshold": 0.7,
-      "n": 5,
-      "hits": 4,
-      "precision": 0.8
+      "n": 12,
+      "hits": 7,
+      "precision": 0.5833333333333334
     },
     "precision_at_85": {
       "threshold": 0.85,
-      "n": 5,
-      "hits": 4,
-      "precision": 0.8
+      "n": 12,
+      "hits": 7,
+      "precision": 0.5833333333333334
     },
     "by_probability_bin": [
       {
@@ -54,28 +55,54 @@
       },
       {
         "range": "80-90",
-        "n": 2,
-        "hits": 2,
-        "pred_mean": 0.8623997062998259,
+        "n": 1,
+        "hits": 1,
+        "pred_mean": 0.880033564755297,
         "win_rate": 1.0,
-        "gap_pp": -0.13760029370017413,
-        "wr_ci_low": 0.34237195288961925,
+        "gap_pp": -0.11996643524470296,
+        "wr_ci_low": 0.2065432914738929,
         "wr_ci_high": 1.0
       },
       {
         "range": "90-100",
-        "n": 3,
-        "hits": 2,
-        "pred_mean": 0.9420621745038936,
-        "win_rate": 0.6666666666666666,
-        "gap_pp": 0.275395507837227,
-        "wr_ci_low": 0.20765495512648796,
-        "wr_ci_high": 0.9385096847238394
+        "n": 11,
+        "hits": 6,
+        "pred_mean": 0.9732018806852473,
+        "win_rate": 0.5454545454545454,
+        "gap_pp": 0.42774733523070185,
+        "wr_ci_low": 0.2800877556899882,
+        "wr_ci_high": 0.7872904245601194
       }
     ]
   },
   "adaptive_layer": {
     "ewma_bot_health": {
+      "fulll47": {
+        "n": 2,
+        "hits": 1,
+        "wr_raw": 0.5,
+        "wr_ci_low": 0.09452865480086614,
+        "wr_ci_high": 0.9054713451991339,
+        "mature_sample": false,
+        "ewma_hit": 0.75,
+        "ewma_false_high_penalty": 0.25,
+        "false_high_count": 1,
+        "health_score": 0.6625,
+        "alpha": 0.25
+      },
+      "fulll50": {
+        "n": 4,
+        "hits": 3,
+        "wr_raw": 0.75,
+        "wr_ci_low": 0.3006360524426366,
+        "wr_ci_high": 0.9544139373553637,
+        "mature_sample": false,
+        "ewma_hit": 0.75,
+        "ewma_false_high_penalty": 0.25,
+        "false_high_count": 1,
+        "health_score": 0.6625,
+        "alpha": 0.25
+      },
       "fulll48": {
         "n": 1,
         "hits": 0,
@@ -89,30 +116,30 @@
         "health_score": 0.0,
         "alpha": 0.25
       },
-      "fulll50": {
+      "fulll45": {
         "n": 3,
-        "hits": 3,
-        "wr_raw": 1.0,
-        "wr_ci_low": 0.43849391955098227,
-        "wr_ci_high": 1.0,
+        "hits": 2,
+        "wr_raw": 0.6666666666666666,
+        "wr_ci_low": 0.20765495512648796,
+        "wr_ci_high": 0.9385096847238394,
         "mature_sample": false,
-        "ewma_hit": 1.0,
-        "ewma_false_high_penalty": 0.0,
-        "false_high_count": 0,
-        "health_score": 1.0,
+        "ewma_hit": 0.75,
+        "ewma_false_high_penalty": 0.25,
+        "false_high_count": 1,
+        "health_score": 0.6625,
         "alpha": 0.25
       },
-      "fulll47": {
-        "n": 1,
+      "fulll46": {
+        "n": 2,
         "hits": 1,
-        "wr_raw": 1.0,
-        "wr_ci_low": 0.2065432914738929,
-        "wr_ci_high": 1.0,
+        "wr_raw": 0.5,
+        "wr_ci_low": 0.09452865480086614,
+        "wr_ci_high": 0.9054713451991339,
         "mature_sample": false,
-        "ewma_hit": 1.0,
-        "ewma_false_high_penalty": 0.0,
-        "false_high_count": 0,
-        "health_score": 1.0,
+        "ewma_hit": 0.75,
+        "ewma_false_high_penalty": 0.25,
+        "false_high_count": 1,
+        "health_score": 0.6625,
         "alpha": 0.25
       }
     },
@@ -127,8 +154,8 @@
       "min_closed_required": 20,
       "min_n90_required": 8,
       "min_mature_bots_for_health": 2,
-      "closed_signals": 5,
-      "bin_90_100_n": 3,
+      "closed_signals": 12,
+      "bin_90_100_n": 11,
       "reasons": [
         "muestra_insuficiente_para_automatizar",
         "sobreconfianza_alta_90_100",
@@ -145,52 +172,62 @@
   },
   "bot_alignment": {
     "fulll45": {
-      "rows_closed": 1704,
-      "wr_all": 0.4994131455399061,
-      "wr_last_n": 0.5,
+      "rows_closed": 1932,
+      "wr_all": 0.5020703933747412,
+      "wr_last_n": 0.45,
       "last_n": 40,
-      "signals_n": 0,
+      "n": 3,
+      "prob_mean_all": 0.9248553485083281,
+      "hit_all": 0.6666666666666666,
+      "prob_mean_last_n": 0.9248553485083281,
+      "hit_last_n": 0.6666666666666666,
+      "signals_n": 3,
       "signals_min_for_gap": 5,
       "signals_sample_ok": false,
       "prob_vs_hit_gap_last_n": null,
       "prob_vs_wr_gap_last_n": null
     },
     "fulll46": {
-      "rows_closed": 1709,
-      "wr_all": 0.5038033937975425,
-      "wr_last_n": 0.475,
+      "rows_closed": 1938,
+      "wr_all": 0.5020639834881321,
+      "wr_last_n": 0.5,
       "last_n": 40,
-      "signals_n": 0,
+      "n": 2,
+      "prob_mean_all": 0.9744935241883956,
+      "hit_all": 0.5,
+      "prob_mean_last_n": 0.9744935241883956,
+      "hit_last_n": 0.5,
+      "signals_n": 2,
       "signals_min_for_gap": 5,
       "signals_sample_ok": false,
       "prob_vs_hit_gap_last_n": null,
       "prob_vs_wr_gap_last_n": null
     },
     "fulll47": {
-      "rows_closed": 1695,
-      "wr_all": 0.49616519174041296,
-      "wr_last_n": 0.575,
+      "rows_closed": 1919,
+      "wr_all": 0.49765502866076083,
+      "wr_last_n": 0.55,
       "last_n": 40,
-      "n": 1,
-      "prob_mean_all": 0.906652561614388,
-      "hit_all": 1.0,
-      "prob_mean_last_n": 0.906652561614388,
-      "hit_last_n": 1.0,
-      "signals_n": 1,
+      "n": 2,
+      "prob_mean_all": 0.988909486723654,
+      "hit_all": 0.5,
+      "prob_mean_last_n": 0.988909486723654,
+      "hit_last_n": 0.5,
+      "signals_n": 2,
       "signals_min_for_gap": 5,
       "signals_sample_ok": false,
       "prob_vs_hit_gap_last_n": null,
       "prob_vs_wr_gap_last_n": null
     },
     "fulll48": {
-      "rows_closed": 1709,
-      "wr_all": 0.502633118782914,
-      "wr_last_n": 0.525,
+      "rows_closed": 1937,
+      "wr_all": 0.49974186886938565,
+      "wr_last_n": 0.55,
       "last_n": 40,
       "n": 1,
-      "prob_mean_all": 0.9505508941840072,
+      "prob_mean_all": 0.9830973742500184,
       "hit_all": 0.0,
-      "prob_mean_last_n": 0.9505508941840072,
+      "prob_mean_last_n": 0.9830973742500184,
       "hit_last_n": 0.0,
       "signals_n": 1,
       "signals_min_for_gap": 5,
@@ -199,9 +236,9 @@
       "prob_vs_wr_gap_last_n": null
     },
     "fulll49": {
-      "rows_closed": 1702,
-      "wr_all": 0.4970622796709753,
-      "wr_last_n": 0.675,
+      "rows_closed": 1931,
+      "wr_all": 0.490937338166753,
+      "wr_last_n": 0.4,
       "last_n": 40,
       "signals_n": 0,
       "signals_min_for_gap": 5,
@@ -210,16 +247,16 @@
       "prob_vs_wr_gap_last_n": null
     },
     "fulll50": {
-      "rows_closed": 1709,
-      "wr_all": 0.5055588063194851,
-      "wr_last_n": 0.6,
+      "rows_closed": 1936,
+      "wr_all": 0.5020661157024794,
+      "wr_last_n": 0.55,
       "last_n": 40,
-      "n": 3,
-      "prob_mean_all": 0.8979274934376459,
-      "hit_all": 1.0,
-      "prob_mean_last_n": 0.8979274934376459,
-      "hit_last_n": 1.0,
-      "signals_n": 3,
+      "n": 4,
+      "prob_mean_all": 0.9751962026734788,
+      "hit_all": 0.75,
+      "prob_mean_last_n": 0.9751962026734788,
+      "hit_last_n": 0.75,
+      "signals_n": 4,
       "signals_min_for_gap": 5,
       "signals_sample_ok": false,
       "prob_vs_hit_gap_last_n": null,
@@ -233,16 +270,16 @@
   "token_real_state": {
     "real_sim_state": {},
     "last_promotions_tail": [
-      "2026-02-26 07:10:55 - Token REAL (inmediato) asignado a fulll47 (ciclo 3)",
-      "2026-02-26 07:14:59 - Token REAL (inmediato) asignado a fulll48 (ciclo 1)",
-      "2026-02-26 07:18:49 - Token REAL (inmediato) asignado a fulll49 (ciclo 1)",
-      "2026-02-26 07:21:47 - Token REAL (inmediato) asignado a fulll47 (ciclo 2)",
-      "2026-02-26 07:30:20 - Token REAL (inmediato) asignado a fulll45 (ciclo 1)",
-      "2026-02-26 07:34:48 - Token REAL (inmediato) asignado a fulll46 (ciclo 2)",
-      "2026-02-26 07:39:26 - Token REAL (inmediato) asignado a fulll47 (ciclo 3)",
-      "2026-02-26 07:42:24 - Token REAL (inmediato) asignado a fulll50 (ciclo 1)",
-      "2026-02-26 07:44:45 - Token REAL (inmediato) asignado a fulll48 (ciclo 2)",
-      "2026-02-26 07:47:40 - Token REAL (inmediato) asignado a fulll45 (ciclo 1)"
+      "2026-02-27 12:42:23 - Token REAL (inmediato) asignado a fulll49 (ciclo 1)",
+      "2026-02-27 12:44:45 - Token REAL (inmediato) asignado a fulll46 (ciclo 1)",
+      "2026-02-27 12:50:24 - Token REAL (inmediato) asignado a fulll47 (ciclo 2)",
+      "2026-02-27 12:52:52 - Token REAL (inmediato) asignado a fulll49 (ciclo 3)",
+      "2026-02-27 12:57:23 - Token REAL (inmediato) asignado a fulll50 (ciclo 4)",
+      "2026-02-27 13:16:02 - Token REAL (inmediato) asignado a fulll48 (ciclo 1)",
+      "2026-02-27 13:21:42 - Token REAL (inmediato) asignado a fulll50 (ciclo 2)",
+      "2026-02-27 13:24:38 - Token REAL (inmediato) asignado a fulll46 (ciclo 3)",
+      "2026-02-27 13:58:45 - Token REAL (inmediato) asignado a fulll45 (ciclo 4)",
+      "2026-02-27 14:09:46 - Token REAL (inmediato) asignado a fulll49 (ciclo 5)"
     ]
   },
   "readiness_recommendation": {
@@ -253,21 +290,28 @@
       "reliable=true": false,
       "auc>=0.53": false
     },
-    "n_samples": 3174,
-    "closed_signals": 5,
-    "auc": 0.49327093321662324,
+    "n_samples": 1359,
+    "closed_signals": 12,
+    "auc": 0.4904990842490842,
     "reliable": false
+  },
+  "model_health": {
+    "feature_count": 2,
+    "collapsed_lt5": true,
+    "auc": 0.4904990842490842,
+    "reliable": false,
+    "block_promotion": true
   },
   "operational_guidance": {
     "official_gate_threshold": 0.85,
     "shadow_suggested_threshold": 0.87,
     "apply_shadow_only": true,
     "silent_bots": [
-      "fulll45",
-      "fulll46",
       "fulll49"
     ],
     "low_sample_bots": [
+      "fulll45",
+      "fulll46",
       "fulll47",
       "fulll48",
       "fulll50"
