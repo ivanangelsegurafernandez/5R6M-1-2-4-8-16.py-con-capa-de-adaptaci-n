@@ -1,55 +1,50 @@
-# Hallazgos de patrón ganador (exploratorio)
+# Hallazgos: patrón prometedor con drift
 
-Este análisis responde: **"¿hay algo repetible que aumente la tasa de éxito?"**
+Este análisis ya **no** se presenta como “patrón ganador definitivo”.
+Se presenta como **patrón prometedor** que debe vigilarse por **drift**.
 
-## ¿Qué hace `analisis_patron_ganador.py`?
-
-1. Carga `dataset_incremental.csv` (o el CSV que indiques con `--dataset`).
-2. Calcula la tasa base de acierto (`result_bin=1`).
-3. Busca reglas de 2 variables en extremos (`<=Q1` y `>=Q3`).
-4. Ordena por **lift** (cuánto mejora sobre la tasa base).
-5. Imprime reporte en consola y opcionalmente lo guarda con `--guardar`.
-
-## Cómo correrlo (rápido)
+## Qué hace ahora `analisis_patron_ganador.py`
 
 ```bash
 python analisis_patron_ganador.py
 ```
 
-Si quieres más reglas o menos restricción de tamaño mínimo:
+Genera un reporte en consola con 4 bloques:
+
+1. **Top reglas duales** por lift (`<=Q1` / `>=Q3`).
+2. **Pattern Score + veto tardío** (penaliza persecución de racha sin confirmación dual).
+3. **Persistencia por 3 ventanas cronológicas** para medir drift.
+4. **Ranking híbrido v1 (proxy)** para llevar el hallazgo a lógica operativa.
+
+## Idea operativa implementada
+
+- **Pattern Score** (suma):
+  - `rsi_9>=Q3` (+2)
+  - `rsi_reversion>=Q3` (+2)
+  - `es_rebote>=Q3` (+2)
+  - `puntaje_estrategia>=Q3` (+1)
+  - `cruce_sma>=Q3` (+1)
+  - `breakout>=Q3` (+1)
+  - `payout>=Q3` (+1)
+  - `volatilidad<=Q2` (+1)
+- **Bonus dual** (+1): si hay confirmación dual de reversión/rebote con `rsi_9` alto.
+- **Veto tardío / penalización** (-2): si `racha_actual` está alta pero sin confirmación dual.
+
+## Comandos útiles
 
 ```bash
-python analisis_patron_ganador.py --top 15 --min-muestras 20
-```
+# reporte estándar
+python analisis_patron_ganador.py
 
-Si quieres guardar resultados a archivo:
+# ajustar sensibilidad
+python analisis_patron_ganador.py --score-th 6 --min-muestras 25 --top 15
 
-```bash
+# guardar reporte
 python analisis_patron_ganador.py --guardar reporte_patrones.txt
 ```
 
-## Línea base actual (con el dataset del repo)
+## Interpretación correcta
 
-- Muestras: **257**
-- Win rate base: **58.37%**
-
-## Patrones más fuertes encontrados
-
-1. `rsi_9 >= Q3` + `rsi_reversion >= Q3` → WR **80.00%** (lift **+21.63 pp**, n=40)
-2. `rsi_9 >= Q3` + `es_rebote >= Q3` → WR **79.49%** (lift **+21.12 pp**, n=39)
-3. `rsi_9 >= Q3` + `puntaje_estrategia >= Q3` → WR **77.78%** (lift **+19.41 pp**, n=36)
-4. `rsi_14 >= Q3` + `rsi_reversion >= Q3` → WR **73.33%** (lift **+14.97 pp**, n=30)
-
-## Interpretación operativa
-
-Patrón repetido: **momentum alto + confirmación de reversión/rebote**.
-
-Traducción práctica:
-
-- **Prioridad alta**: `rsi_9` en Q3 y además `rsi_reversion` o `es_rebote` en Q3.
-- **Prioridad media**: solo una confirmación.
-- **Esperar/no operar**: sin confirmación dual y probabilidad IA cerca del umbral.
-
-## Advertencia
-
-Estos hallazgos son exploratorios y deben validarse en *walk-forward* y luego con stake pequeño en real.
+- Si el patrón gana en una ventana y cae en otra, hay drift.
+- Úsalo como filtro/ranking de contexto, no como hard-rule única.
+- Paso siguiente: integrar este score con `prob_ia_oper`, `confirm=2/2`, `trigger_ok` y bloqueos reales del runtime.
