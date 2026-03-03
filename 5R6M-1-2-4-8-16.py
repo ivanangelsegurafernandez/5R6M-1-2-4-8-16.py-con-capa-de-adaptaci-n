@@ -11737,6 +11737,11 @@ DYN_ROOF_LIVE_PEAK_MIN_SAMPLES = 20
 DYN_ROOF_LIVE_PEAK_MARGIN = 0.01
 DYN_ROOF_LIVE_PEAK_MARGIN_UNRELIABLE = 0.05
 DYN_ROOF_LIVE_PEAK_ONLY_RELIABLE = True
+# Trigger suave en modo unreliable para no perder entradas de alta calidad por 1 tick de latencia.
+DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_ENABLE = True
+DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MARGIN = 0.02
+DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MIN_SUCESO = 35.0
+DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MIN_PATTERN = 5.0
 # Cap superior dinámico del techo: mantiene límites altos pero evita quedarse en 85-99% sin ejecuciones.
 DYN_ROOF_MAX_CAP = 0.82
 DYN_ROOF_MAX_CAP_UNRELIABLE = 0.80
@@ -12283,17 +12288,32 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
         )
 
         trigger_pattern = False
+        trigger_soft = False
         if modo_relajado_n15 and (not reliable_mode):
             try:
-                ok_pat, _why_pat = _micro_pattern_gate_ok(str(best_bot), _ultimo_contexto_operativo_bot(str(best_bot)))
+                ctx_best = _ultimo_contexto_operativo_bot(str(best_bot))
+                ok_pat, _why_pat = _micro_pattern_gate_ok(str(best_bot), ctx_best)
                 trigger_pattern = bool(ok_pat and (float(p_best) >= float(floor_eff)))
+
+                if bool(DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_ENABLE):
+                    q3p, q2p = _pattern_v1_thresholds_proxy()
+                    _ps, _pb, _pp, _pt = pattern_score_operativo_v1(ctx_best or {}, q3p, q2p)
+                    suceso_idx_best = float(estado_bots.get(str(best_bot), {}).get("ia_suceso_idx", 0.0) or 0.0)
+                    near_roof_soft = bool(float(p_best) >= float(max(float(floor_eff), float(roof_eff - DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MARGIN))))
+                    confirm_soft = bool(int(confirm_streak) >= max(1, int(confirm_need) - 1))
+                    trigger_soft = bool(
+                        near_roof_soft
+                        and confirm_soft
+                        and ((suceso_idx_best >= float(DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MIN_SUCESO)) or (float(_pt) >= float(DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MIN_PATTERN)))
+                    )
             except Exception:
                 trigger_pattern = False
+                trigger_soft = False
 
         if mode_c_active:
             trigger_ok = bool(suceso_ok)
         elif modo_relajado_n15:
-            trigger_ok = bool(suceso_ok or crossed_up or trigger_force or trigger_pattern)
+            trigger_ok = bool(suceso_ok or crossed_up or trigger_force or trigger_pattern or trigger_soft)
         else:
             trigger_ok = bool(crossed_up)
         if warmup_mode and (not mode_c_active):
