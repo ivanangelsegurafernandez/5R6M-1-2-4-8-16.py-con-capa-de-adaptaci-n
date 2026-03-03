@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
@@ -55,6 +56,21 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _to_float(v: str | None) -> float | None:
+    try:
+        if v is None:
+            return None
+        txt = str(v).strip()
+        if txt == "":
+            return None
+        x = float(txt)
+        if not math.isfinite(x):
+            return None
+        return x
+    except Exception:
+        return None
+
+
 def load_rows(path: Path) -> list[dict[str, float]]:
     if not path.exists():
         raise DataError(f"Dataset no encontrado: {path}")
@@ -62,14 +78,31 @@ def load_rows(path: Path) -> list[dict[str, float]]:
         rd = csv.DictReader(f)
         if rd.fieldnames is None:
             raise DataError("CSV vacío")
-        missing = [c for c in FEATURES + ["result_bin"] if c not in rd.fieldnames]
+        required = FEATURES + ["result_bin"]
+        missing = [c for c in required if c not in rd.fieldnames]
         if missing:
             raise DataError(f"Faltan columnas: {', '.join(missing)}")
-        rows = []
+
+        rows: list[dict[str, float]] = []
+        skipped = 0
         for r in rd:
-            rows.append({k: float(v) for k, v in r.items()})
+            item: dict[str, float] = {}
+            valid = True
+            for k in required:
+                x = _to_float(r.get(k))
+                if x is None:
+                    valid = False
+                    break
+                item[k] = x
+            if not valid:
+                skipped += 1
+                continue
+            rows.append(item)
+
     if not rows:
-        raise DataError("Sin filas")
+        raise DataError("Sin filas válidas para analizar")
+    if skipped:
+        print(f"[WARN] Filas descartadas por datos faltantes/no numéricos: {skipped}")
     return rows
 
 
@@ -229,7 +262,12 @@ def main() -> int:
         print(f"[ERROR] {e}")
         return 1
 
-    report = build_report(rows, top=max(1, args.top), min_muestras=args.min_muestras, score_th=args.score_th)
+    report = build_report(
+        rows,
+        top=max(1, int(args.top)),
+        min_muestras=max(1, int(args.min_muestras)),
+        score_th=float(args.score_th),
+    )
     print(report)
     if args.guardar:
         out = Path(args.guardar).resolve()

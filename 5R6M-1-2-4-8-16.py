@@ -239,11 +239,11 @@ IA_OVERCONF_DYNAMIC_CAP = 0.90
 IA_CHECKPOINT_CLOSED_STEP = 20
 # Guardrail duro de salud IA (global+por bot): evita sobreconfianza con muestra inmadura.
 IA_HARD_GUARD_ENABLE = True
-IA_HARD_GUARD_RED_MIN_CLOSED = 20
+IA_HARD_GUARD_RED_MIN_CLOSED = 5
 IA_HARD_GUARD_AMBER_MIN_CLOSED = 80
-IA_HARD_GUARD_RED_MIN_AUC = 0.52
+IA_HARD_GUARD_RED_MIN_AUC = 0.48
 IA_HARD_GUARD_GREEN_MIN_AUC = 0.55
-IA_HARD_GUARD_MIN_FEATURES_RED = 5
+IA_HARD_GUARD_MIN_FEATURES_RED = 3
 IA_HARD_GUARD_MIN_FEATURES_GREEN = 6
 IA_HARD_GUARD_RED_CAP = 0.66
 IA_HARD_GUARD_AMBER_CAP = 0.66
@@ -4258,13 +4258,13 @@ def _estado_guardrail_ia_fuerte(force: bool = False, ttl_s: float = 20.0) -> dic
 
         red_cond = bool(
             (closed < int(IA_HARD_GUARD_RED_MIN_CLOSED))
-            or (not reliable)
             or (auc < float(IA_HARD_GUARD_RED_MIN_AUC))
             or (feat_count > 0 and feat_count < int(IA_HARD_GUARD_MIN_FEATURES_RED))
             or severe_gap
         )
         amber_cond = bool(
             (closed < int(IA_HARD_GUARD_AMBER_MIN_CLOSED))
+            or (not reliable)
             or amber_gap
         )
         green_cond = bool(
