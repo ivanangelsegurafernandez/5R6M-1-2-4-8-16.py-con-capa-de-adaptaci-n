@@ -239,7 +239,7 @@ IA_OVERCONF_DYNAMIC_CAP = 0.90
 IA_CHECKPOINT_CLOSED_STEP = 20
 # Guardrail duro de salud IA (global+por bot): evita sobreconfianza con muestra inmadura.
 IA_HARD_GUARD_ENABLE = True
-IA_HARD_GUARD_RED_MIN_CLOSED = 5
+IA_HARD_GUARD_RED_MIN_CLOSED = 0
 IA_HARD_GUARD_AMBER_MIN_CLOSED = 80
 IA_HARD_GUARD_RED_MIN_AUC = 0.48
 IA_HARD_GUARD_GREEN_MIN_AUC = 0.55
@@ -270,10 +270,10 @@ IA_WARMUP_LOW_EVIDENCE_CAP_BASE = 0.80
 IA_WARMUP_LOW_EVIDENCE_CAP_POST_N15 = 0.85
 
 AUTO_REAL_ALLOW_UNRELIABLE_POST_N15 = True
-AUTO_REAL_UNRELIABLE_MIN_N = 80
+AUTO_REAL_UNRELIABLE_MIN_N = 0
 AUTO_REAL_UNRELIABLE_MIN_PROB = 0.58  # base más realista: evita bloqueo permanente cuando el modelo no escala a 63%
 AUTO_REAL_UNRELIABLE_MIN_AUC = 0.48   # tolerancia leve en unreliable para no congelar AUTO con AUC marginal
-AUTO_REAL_BLOCK_WHEN_WARMUP = True    # durante warmup evita promoción AUTO en modo unreliable
+AUTO_REAL_BLOCK_WHEN_WARMUP = False   # permitir REAL moderado en LOW_DATA/warmup si compuerta dinámica valida
 # Ajuste mínimo anti-congelamiento lateral: permite bajar el umbral UNREL
 # solo cuando hay evidencia operativa consistente por bot.
 AUTO_REAL_UNREL_LATERAL_ADAPT_ENABLE = True
@@ -11630,17 +11630,17 @@ REAL_TRIGGER_MIN = AUTO_REAL_THR_MIN  # alineado al piso base de 70% para arranq
 # Lote de actualización del maestro (ticks de lectura IA)
 DYN_ROOF_BATCH_TICKS = 15
 # Paciencia dura antes de empezar a bajar el techo (4 lotes = 60 ticks)
-DYN_ROOF_HOLD_BATCHES = 4
+DYN_ROOF_HOLD_BATCHES = 2
 DYN_ROOF_HOLD_TICKS = DYN_ROOF_BATCH_TICKS * DYN_ROOF_HOLD_BATCHES
 # Derretido lento del techo: -0.5pp por lote tras la paciencia
-DYN_ROOF_STEP = 0.005
+DYN_ROOF_STEP = 0.010
 # Piso duro para REAL
 DYN_ROOF_FLOOR = AUTO_REAL_THR_MIN
 # Ventaja mínima del mejor vs segundo mejor
 DYN_ROOF_GAP = 0.03
 # Confirmación mínima (ticks consecutivos del MISMO bot)
-DYN_ROOF_CONFIRM_TICKS = 2
-DYN_ROOF_TRIGGER_FORCE_STREAK = 2
+DYN_ROOF_CONFIRM_TICKS = 1
+DYN_ROOF_TRIGGER_FORCE_STREAK = 1
 DYN_ROOF_TRIGGER_FORCE_MARGIN = 0.005
 # Tolerancia para considerar "tocado" el techo (near-roof)
 DYN_ROOF_NEAR_TOL = 0.005
@@ -11674,6 +11674,10 @@ DYN_ROOF_MODE_C_MIN_EVIDENCE_LB = 0.60
 DYN_ROOF_LIVE_PEAK_WINDOW = 120
 DYN_ROOF_LIVE_PEAK_MIN_SAMPLES = 20
 DYN_ROOF_LIVE_PEAK_MARGIN = 0.01
+# Cap superior dinámico del techo: mantiene límites altos pero evita quedarse en 85-99% sin ejecuciones.
+DYN_ROOF_MAX_CAP = 0.82
+DYN_ROOF_MAX_CAP_UNRELIABLE = 0.80
+DYN_ROOF_MAX_CAP_WARMUP = 0.78
 REAL_COOLDOWN_UNTIL_TS = 0.0
 LAST_RETRAIN_ERROR = ""
 
@@ -12076,6 +12080,13 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
                     DYN_ROOF_STATE["melt_batches_applied"] = int(batches_now)
 
         roof = float(DYN_ROOF_STATE.get("roof", floor_now) or floor_now)
+        max_cap = float(DYN_ROOF_MAX_CAP)
+        if warmup_mode:
+            max_cap = min(max_cap, float(DYN_ROOF_MAX_CAP_WARMUP))
+        elif not reliable_mode:
+            max_cap = min(max_cap, float(DYN_ROOF_MAX_CAP_UNRELIABLE))
+        roof = float(max(float(floor_now), min(float(roof), float(max_cap))))
+        DYN_ROOF_STATE["roof"] = float(roof)
         penalty = float(DYN_ROOF_LOW_N_PENALTY) if int(n_best) < int(DYN_ROOF_LOW_N_MIN) else 0.0
         roof_eff = float(roof + penalty)
         crowding = bool(crowd_count >= int(DYN_ROOF_CROWD_MIN_BOTS))
@@ -13394,7 +13405,7 @@ async def main():
                                     dgate = dyn_gate if isinstance(dyn_gate, dict) else {}
                                     gate_strong_unrel = bool(
                                         AUTO_REAL_UNRELIABLE_ALLOW_STRONG_GATE
-                                        and (not bool(guard_hard.get("active", False)))
+                                        and (not bool(guard_hard.get("hard_block", False)))
                                         and bool(dgate.get("allow_real", False))
                                         and bool(dgate.get("trigger_ok", False))
                                         and (float(dgate.get("p_best", 0.0) or 0.0) >= float(AUTO_REAL_UNRELIABLE_GATE_MIN_PROB))
