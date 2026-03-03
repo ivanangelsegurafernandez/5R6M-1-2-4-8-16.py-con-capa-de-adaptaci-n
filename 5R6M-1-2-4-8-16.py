@@ -213,7 +213,7 @@ AUTO_REAL_LOG_MAX_ROWS = 300  # máximo de señales históricas usadas en la cal
 AUTO_REAL_LIVE_MIN_BOTS = 3   # mínimos bots con prob viva para calibración por tick
 
 # Umbral "operativo/UI" (señales actuales, semáforo, etc.)
-IA_METRIC_THRESHOLD = IA_ACTIVACION_REAL_THR
+IA_METRIC_THRESHOLD = AUTO_REAL_THR_MIN
 # Modo clásico: activación REAL con umbral operativo vigente (hoy 65%, con techo dinámico base 70%).
 # Mantiene lock de un solo bot en REAL y ciclo martingala global en HUD.
 REAL_CLASSIC_GATE = True
@@ -11735,12 +11735,11 @@ def _todos_bots_con_n_minimo_real(min_n: int | None = None) -> bool:
 
 def _umbral_real_operativo_actual() -> float:
     """
-    Umbral REAL dinámico:
-    - Base 85%
-    - Post-n15: 75%
-    - Si el modelo sigue unreliable con muestra suficiente, usar piso post-n15 más realista
-      para evitar bloqueo permanente por compuerta alta.
+    Umbral REAL dinámico con piso unificado:
+    - Piso mínimo: AUTO_REAL_THR_MIN (base operativa actual, p.ej. 70%).
+    - Post-n15 puede sugerir umbrales menores por confiabilidad, pero NUNCA baja del piso.
     """
+    piso = float(AUTO_REAL_THR_MIN)
     try:
         if _todos_bots_con_n_minimo_real():
             meta = _ORACLE_CACHE.get("meta") or leer_model_meta() or {}
@@ -11748,11 +11747,11 @@ def _umbral_real_operativo_actual() -> float:
             warmup = bool(meta.get("warmup_mode", n_samples < int(TRAIN_WARMUP_MIN_ROWS)))
             reliable = bool(meta.get("reliable", False)) and (not warmup)
             if (not reliable) and (n_samples >= int(IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES)):
-                return float(IA_ACTIVACION_REAL_THR_POST_N15_UNREL)
-            return float(IA_ACTIVACION_REAL_THR_POST_N15)
+                return float(max(piso, float(IA_ACTIVACION_REAL_THR_POST_N15_UNREL)))
+            return float(max(piso, float(IA_ACTIVACION_REAL_THR_POST_N15)))
     except Exception:
         pass
-    return float(IA_ACTIVACION_REAL_THR)
+    return float(max(piso, float(IA_ACTIVACION_REAL_THR)))
 
 
 def _n_minimo_real_status() -> tuple[int, int]:
