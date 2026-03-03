@@ -169,6 +169,12 @@ REMATE_SIN_TOPE = False      # Limitado por MAX_CICLOS
 # === HUD / Layout ===
 HUD_LAYOUT = "bottom_center"  # Fijado en centro inferior
 HUD_VISIBLE = True       # Para ocultarlo con tecla
+# Visual/UI (no afecta lógica funcional): reducir ruido en consola
+HUD_COMPACT_MODE = True
+HUD_SHOW_TOP3_GATES = False
+HUD_SHOW_RACHA_BLOQUES = False
+HUD_EVENTS_MAX = 4
+HUD_EVENT_MAX_CHARS = 150
 
 # --- Objetivos / umbrales globales de IA ---
 IA_OBJETIVO_REAL_THR = 0.70   # objetivo de calidad REAL (meta: 70% aprox)
@@ -10217,13 +10223,23 @@ def mostrar_panel():
             except Exception:
                 top_txt = "--"
 
-            print(padding + Fore.CYAN + f"🧪 Embudo: {funnel_txt}")
+            if bool(HUD_COMPACT_MODE):
+                failed = [k for (k, ok) in funnel_checks if not ok]
+                funnel_compact = ("OK" if not failed else ",".join(failed[:4]))
+                if len(failed) > 4:
+                    funnel_compact += f" +{len(failed)-4}"
+                print(padding + Fore.CYAN + f"🧪 Embudo: {funnel_compact}")
+            else:
+                print(padding + Fore.CYAN + f"🧪 Embudo: {funnel_txt}")
             if owner in BOT_NAMES:
                 principal_txt = f"{principal_txt} (solo nuevas entradas; REAL activo={owner})"
             decision_line = f"🧭 Decisión tick: P_diag={p_diag*100:.1f}% | P_model={p_model*100:.1f}% | P_oper={p_oper*100:.1f}% | modo={modo_score} | Bloqueo principal={principal_txt}"
             print(padding + Fore.CYAN + decision_line)
             _runtime_audit_append(decision_line)
-            print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | B-GATE={floor_gate_h*100:.1f}% | LIVE_MAX={live_peak_h*100:.1f}% (n={live_peak_n_h}) | CLASSIC={AUTO_REAL_THR_MIN*100:.0f}%")
+            if bool(HUD_COMPACT_MODE):
+                print(padding + Fore.CYAN + f"📏 Umbrales: UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | CLASSIC={AUTO_REAL_THR_MIN*100:.0f}%")
+            else:
+                print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | B-GATE={floor_gate_h*100:.1f}% | LIVE_MAX={live_peak_h*100:.1f}% (n={live_peak_n_h}) | CLASSIC={AUTO_REAL_THR_MIN*100:.0f}%")
             bloqueos_line = f"📉 Bloqueo dominante ({len(HUD_BLOQUEOS_RECIENTES)} ticks): {top_txt}"
             print(padding + Fore.CYAN + bloqueos_line)
             _runtime_audit_append(bloqueos_line)
@@ -10327,7 +10343,7 @@ def mostrar_panel():
                             f"CONF{conf_txt} SUC{'✅' if suceso_ok_b else '❌'} CLN{'🛑' if clone_b else 'ok'}"
                         )
 
-                    if dbg_chunks:
+                    if dbg_chunks and bool(HUD_SHOW_TOP3_GATES):
                         print(padding + Fore.CYAN + f"🔬 Gates(top3): {' | '.join(dbg_chunks)}")
             except Exception:
                 pass
@@ -10357,7 +10373,7 @@ def mostrar_panel():
                 score = (2.6 if reg == "R3" else 2.1 if reg == "R2" else 1.0 if reg == "R1" else 0.4 if reg == "R4" else 0.0) + max(0.0, acel) + max(0.0, d8 - 0.5)
                 score_racha.append((b, score, reg, lar, acel))
 
-            if resumen_racha:
+            if resumen_racha and bool(HUD_SHOW_RACHA_BLOQUES):
                 print(padding + Fore.CYAN + "🧩 Régimen racha (obs): " + " | ".join(resumen_racha[:3]))
                 if len(resumen_racha) > 3:
                     print(padding + Fore.CYAN + "                          " + " | ".join(resumen_racha[3:]))
@@ -11097,11 +11113,20 @@ def dibujar_hud_gatewin(panel_height=8, layout=None):
     for i, line in enumerate(hud_lines):
         print(f"\x1b[{start_row + i};{start_col}H" + Fore.YELLOW + line + Fore.RESET)
 
+def _hud_trim_line(txt: str, max_chars: int | None = None) -> str:
+    try:
+        m = int(max_chars or HUD_EVENT_MAX_CHARS)
+        s = str(txt)
+        return s if len(s) <= m else (s[: max(0, m - 1)] + "…")
+    except Exception:
+        return str(txt)
+
+
 def mostrar_eventos():
     if eventos_recentes:
         print(Fore.MAGENTA + "\nEventos recientes:")
-        for ev in list(eventos_recentes)[-5:]:
-            print(Fore.MAGENTA + " - " + ev)
+        for ev in list(eventos_recentes)[-int(HUD_EVENTS_MAX):]:
+            print(Fore.MAGENTA + " - " + _hud_trim_line(ev, HUD_EVENT_MAX_CHARS))
 # === FIN BLOQUE 11 ===
 
 # === BLOQUE 12 — CONTROL MANUAL REAL Y CONDICIONES SEGURAS ===
