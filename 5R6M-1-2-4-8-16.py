@@ -178,10 +178,10 @@ HUD_EVENT_MAX_CHARS = 150
 
 # --- Objetivos / umbrales globales de IA ---
 IA_OBJETIVO_REAL_THR = 0.70   # objetivo de calidad REAL (meta: 70% aprox)
-IA_ACTIVACION_REAL_THR = 0.65 # perfil de arranque: habilitar REAL desde 65% con candados activos
-IA_ACTIVACION_REAL_THR_POST_N15 = 0.65  # post-n15 alineado al piso operativo de arranque
+IA_ACTIVACION_REAL_THR = 0.60 # perfil moderado: habilitar REAL desde 60% con candados activos
+IA_ACTIVACION_REAL_THR_POST_N15 = 0.58  # post-n15: bajar piso operativo para destrabar REAL moderado
 # En modo unreliable (reliable=false), permitir piso post-n15 más realista para no congelar entradas.
-IA_ACTIVACION_REAL_THR_POST_N15_UNREL = 0.60
+IA_ACTIVACION_REAL_THR_POST_N15_UNREL = 0.56
 IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES = 300
 IA_ACTIVACION_REAL_MIN_N_POR_BOT = 15   # condición: todos los bots deben tener al menos n=15
 
@@ -205,7 +205,7 @@ IA_SENSOR_PLANO_SCORE_PENALTY = 0.04
 IA_SUCESO_SCORE_WEIGHT = 0.08
 IA_OBSERVE_THR = 0.70
 AUTO_REAL_THR = IA_OBJETIVO_REAL_THR      # techo dinámico objetivo (70%)
-AUTO_REAL_BASE_FLOOR = 0.70                 # nuevo: piso base del techo dinámico en 70%
+AUTO_REAL_BASE_FLOOR = 0.60                 # piso base dinámico para evitar bloqueo permanente en MODELO experimental
 AUTO_REAL_THR_MIN = max(float(IA_ACTIVACION_REAL_THR), float(AUTO_REAL_BASE_FLOOR))
 AUTO_REAL_TOP_Q = 0.80    # cuantíl de probs históricas para calibrar el gate REAL
 AUTO_REAL_MARGIN = 0.01   # pequeño margen para evitar quedar fuera por décimas
@@ -258,7 +258,7 @@ IA_HARD_GUARD_BOT_GAP_PP = 0.18
 # Impulso por racha reciente (micro-ajuste dinámico para evitar Prob IA plana).
 IA_RACHA_BOOST_ENABLE = True
 IA_RACHA_BOOST_WINDOW = 8
-IA_RACHA_BOOST_MAX_UP = 0.07
+IA_RACHA_BOOST_MAX_UP = 0.10
 IA_RACHA_BOOST_MAX_DN = 0.05
 IA_RACHA_BOOST_MIN_WINS = 5
 IA_RACHA_BOOST_LOG_COOLDOWN_S = 25.0
@@ -271,7 +271,7 @@ IA_WARMUP_LOW_EVIDENCE_CAP_POST_N15 = 0.85
 
 AUTO_REAL_ALLOW_UNRELIABLE_POST_N15 = True
 AUTO_REAL_UNRELIABLE_MIN_N = 0
-AUTO_REAL_UNRELIABLE_MIN_PROB = 0.58  # base más realista: evita bloqueo permanente cuando el modelo no escala a 63%
+AUTO_REAL_UNRELIABLE_MIN_PROB = 0.50  # modo unreliable moderado: habilita entradas cuando el modelo discrimina en 50-56%
 AUTO_REAL_UNRELIABLE_MIN_AUC = 0.48   # tolerancia leve en unreliable para no congelar AUTO con AUC marginal
 AUTO_REAL_BLOCK_WHEN_WARMUP = False   # permitir REAL moderado en LOW_DATA/warmup si compuerta dinámica valida
 # Ajuste mínimo anti-congelamiento lateral: permite bajar el umbral UNREL
@@ -279,7 +279,8 @@ AUTO_REAL_BLOCK_WHEN_WARMUP = False   # permitir REAL moderado en LOW_DATA/warmu
 AUTO_REAL_UNREL_LATERAL_ADAPT_ENABLE = True
 AUTO_REAL_UNREL_LATERAL_MIN_N = 50
 AUTO_REAL_UNREL_LATERAL_MIN_WR = 0.50
-AUTO_REAL_UNREL_LATERAL_MIN_PROB = 0.55
+AUTO_REAL_UNREL_LATERAL_MIN_PROB = 0.50
+AUTO_REAL_UNRELIABLE_FLOOR = 0.52      # piso REAL temporal cuando reliable=false y ya hay n mínimo por bot
 # Micro-relajación gradual del umbral UNREL basada en cierres auditados reales.
 # Solo aplica cuando ya hay muestra suficiente y rendimiento sostenido.
 AUTO_REAL_UNREL_MICRO_RELAX_ENABLE = True
@@ -395,6 +396,15 @@ PATTERN_V1_Q2_PROXY = {
     "volatilidad": 0.049,
 }
 PATTERN_V1_LAST_LOG_TS = {}
+# Fase operativa REAL por madurez: SHADOW -> MICRO -> NORMAL
+REAL_PILOT_MODE_ENABLE = True
+REAL_MICRO_REQUIRE_PATTERN = True
+REAL_MICRO_PATTERN_MIN_TOTAL = 6.0
+REAL_MICRO_REQUIRE_DUAL = True
+REAL_MICRO_REQUIRE_STRUCTURE = True
+REAL_MICRO_MIN_WR = 0.52
+REAL_MICRO_MIN_TRADES = 40
+REAL_MICRO_TOP_K = 1
 
 
 def _validar_pattern_v1_config() -> None:
@@ -478,6 +488,57 @@ def _pattern_v1_log_bot(bot: str, pattern_score: float, bonus_dual: float, penal
         )
     except Exception:
         pass
+
+
+def _resolver_estado_real(meta_live: dict | None = None) -> str:
+    """Estado operativo REAL: SHADOW, MICRO, NORMAL."""
+    try:
+        if not bool(REAL_PILOT_MODE_ENABLE):
+            return "NORMAL"
+        meta = meta_live if isinstance(meta_live, dict) else (_ORACLE_CACHE.get("meta") or leer_model_meta() or {})
+        n = int(meta.get("n_samples", meta.get("n", 0)) or 0)
+        auc = float(meta.get("auc", 0.0) or 0.0)
+        warmup = bool(meta.get("warmup_mode", n < int(TRAIN_WARMUP_MIN_ROWS)))
+        reliable = bool(meta.get("reliable", False)) and (not warmup)
+        hg = _estado_guardrail_ia_fuerte(force=False)
+        if reliable and (auc >= 0.53) and (not bool(hg.get("hard_block", False))):
+            return "NORMAL"
+        if n >= int(MIN_FIT_ROWS_PROD):
+            return "MICRO"
+        return "SHADOW"
+    except Exception:
+        return "SHADOW"
+
+
+def _micro_pattern_gate_ok(bot: str, ctx: dict | None = None) -> tuple[bool, str]:
+    """Filtro principal en MICRO: patrón dual + estructura + recencia mínima."""
+    try:
+        if not bool(REAL_MICRO_REQUIRE_PATTERN):
+            return True, "off"
+        st = estado_bots.get(bot, {}) if isinstance(estado_bots, dict) else {}
+        c = ctx if isinstance(ctx, dict) else _ultimo_contexto_operativo_bot(bot)
+        q3, q2 = _pattern_v1_thresholds_proxy()
+        p_score, p_bonus, p_penal, p_total = pattern_score_operativo_v1(c or {}, q3, q2)
+        if float(p_total) < float(REAL_MICRO_PATTERN_MIN_TOTAL):
+            return False, f"pat<{REAL_MICRO_PATTERN_MIN_TOTAL:.1f}"
+        if bool(REAL_MICRO_REQUIRE_DUAL) and float(p_bonus) <= 0.0:
+            return False, "dual=no"
+        if bool(REAL_MICRO_REQUIRE_STRUCTURE):
+            breakout_ok = bool(float((c or {}).get("breakout", 0.0) or 0.0) >= float(q3.get("breakout", 1e9)))
+            cruce_ok = bool(float((c or {}).get("cruce_sma", 0.0) or 0.0) >= float(q3.get("cruce_sma", 1e9)))
+            if not (breakout_ok or cruce_ok):
+                return False, "struct=no"
+        g = int(st.get("ganancias", 0) or 0)
+        d = int(st.get("perdidas", 0) or 0)
+        n = int(max(0, g + d))
+        wr = float((g + 1.0) / (n + 2.0))
+        if n >= int(REAL_MICRO_MIN_TRADES) and wr < float(REAL_MICRO_MIN_WR):
+            return False, f"wr<{REAL_MICRO_MIN_WR*100:.0f}%"
+        if float(p_penal) > 0.0:
+            return False, "late=veto"
+        return True, f"pat={p_total:.1f}"
+    except Exception:
+        return False, "pattern_err"
 
 
 _validar_pattern_v1_config()
@@ -11739,23 +11800,28 @@ def _todos_bots_con_n_minimo_real(min_n: int | None = None) -> bool:
 
 def _umbral_real_operativo_actual() -> float:
     """
-    Umbral REAL dinámico con piso unificado:
-    - Piso mínimo: AUTO_REAL_THR_MIN (base operativa actual, p.ej. 70%).
-    - Post-n15 puede sugerir umbrales menores por confiabilidad, pero NUNCA baja del piso.
+    Umbral REAL dinámico con piso inteligente:
+    - En modo confiable: mantiene piso AUTO_REAL_THR_MIN.
+    - En unreliable con n mínimo por bot: habilita piso moderado temporal.
     """
-    piso = float(AUTO_REAL_THR_MIN)
+    piso_conf = float(AUTO_REAL_THR_MIN)
     try:
         if _todos_bots_con_n_minimo_real():
             meta = _ORACLE_CACHE.get("meta") or leer_model_meta() or {}
             n_samples = int(meta.get("n_samples", meta.get("n", 0)) or 0)
             warmup = bool(meta.get("warmup_mode", n_samples < int(TRAIN_WARMUP_MIN_ROWS)))
             reliable = bool(meta.get("reliable", False)) and (not warmup)
-            if (not reliable) and (n_samples >= int(IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES)):
-                return float(max(piso, float(IA_ACTIVACION_REAL_THR_POST_N15_UNREL)))
-            return float(max(piso, float(IA_ACTIVACION_REAL_THR_POST_N15)))
+
+            if (not reliable):
+                piso_unrel = float(max(0.50, float(AUTO_REAL_UNRELIABLE_FLOOR)))
+                if n_samples >= int(IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES):
+                    return float(max(piso_unrel, float(IA_ACTIVACION_REAL_THR_POST_N15_UNREL)))
+                return float(max(piso_unrel, float(IA_ACTIVACION_REAL_THR)))
+
+            return float(max(piso_conf, float(IA_ACTIVACION_REAL_THR_POST_N15)))
     except Exception:
         pass
-    return float(max(piso, float(IA_ACTIVACION_REAL_THR)))
+    return float(max(piso_conf, float(IA_ACTIVACION_REAL_THR)))
 
 
 def _n_minimo_real_status() -> tuple[int, int]:
@@ -11906,7 +11972,7 @@ def _umbral_unrel_operativo(best_bot: str | None, best_prob: float | None = None
     try:
         base = float(AUTO_REAL_UNRELIABLE_MIN_PROB)
         mr = _calcular_micro_relax_unrel(force=False)
-        base = float(max(0.55, base - float(mr.get("delta", 0.0) or 0.0)))
+        base = float(max(0.50, base - float(mr.get("delta", 0.0) or 0.0)))
         if not bool(AUTO_REAL_UNREL_LATERAL_ADAPT_ENABLE):
             return base
         if not isinstance(best_bot, str) or (best_bot not in BOT_NAMES):
@@ -11942,7 +12008,7 @@ def _umbral_unrel_operativo(best_bot: str | None, best_prob: float | None = None
         if (len(vals) >= 24) and (n_bot >= 40) and (wr_bot >= 0.48):
             q80 = float(np.quantile(np.asarray(vals, dtype=float), 0.80))
             # margen pequeño: pedimos estar cerca del percentil alto reciente
-            thr_q = float(max(0.55, min(base, q80 - 0.01)))
+            thr_q = float(max(0.50, min(base, q80 - 0.01)))
             if p_best >= (thr_q - 0.01):
                 return float(thr_q)
 
@@ -13287,6 +13353,32 @@ async def main():
                                         f"⚠️ Saldo insuficiente para C1: faltan {falta:.2f} USD (C1={costo_ciclo1:.2f})."
                                     )
                                 DYN_ROOF_STATE["last_low_balance_warn_ts"] = float(ahora_warn)
+
+                        # Estado operativo REAL (SOMBRA -> MICRO -> NORMAL)
+                        try:
+                            estado_real = _resolver_estado_real(None)
+                        except Exception:
+                            estado_real = "SHADOW"
+
+                        if candidatos and estado_real == "SHADOW":
+                            agregar_evento("🕶️ REAL=SHADOW: sin madurez suficiente, se mantiene solo observación.")
+                            candidatos = []
+                        elif candidatos and estado_real == "MICRO":
+                            filtrados = []
+                            for cand in candidatos:
+                                try:
+                                    _, b_c, _, _, _, _, _, _ = cand
+                                    ok_pat, why_pat = _micro_pattern_gate_ok(str(b_c), _ultimo_contexto_operativo_bot(str(b_c)))
+                                    if ok_pat:
+                                        filtrados.append(cand)
+                                except Exception:
+                                    continue
+                            if filtrados:
+                                filtrados.sort(key=lambda x: x[0], reverse=True)
+                                candidatos = filtrados[:max(1, int(REAL_MICRO_TOP_K))]
+                            else:
+                                agregar_evento("🧪 REAL=MICRO: sin patrón válido (dual+estructura+no_tardía).")
+                                candidatos = []
 
                         # ==================== AUTO-PRESELECCIÓN (MODO MANUAL) ====================
                         # Si la IA detecta señal y tú estás en manual, preselecciona el mejor bot y abre la ventana
