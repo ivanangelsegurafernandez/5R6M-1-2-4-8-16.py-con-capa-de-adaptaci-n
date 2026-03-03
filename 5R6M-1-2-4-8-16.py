@@ -380,6 +380,7 @@ PATTERN_V1_REQUIRE_CONFIRM_FULL = True   # confirm=2/2
 PATTERN_V1_REQUIRE_TRIGGER_OK = True     # trigger_ok=sí
 PATTERN_V1_USE_HYBRID_RANKING = True     # score_final = prob + bonus - penalizaciones
 PATTERN_V1_LOG_COOLDOWN_S = 25.0
+PATTERN_V1_HYBRID_PTS_TO_PROB = 0.03  # 1 punto pattern = 3pp sobre score probabilístico
 PATTERN_V1_Q3_PROXY = {
     "rsi_9": 64.0,
     "rsi_reversion": 0.060,
@@ -398,11 +399,12 @@ PATTERN_V1_LAST_LOG_TS = {}
 
 def _validar_pattern_v1_config() -> None:
     """Sanitiza parámetros para evitar valores inválidos en runtime."""
-    global PATTERN_V1_SCORE_THR, PATTERN_V1_BONUS_DUAL, PATTERN_V1_PENAL_TARDIA, PATTERN_V1_LOG_COOLDOWN_S
+    global PATTERN_V1_SCORE_THR, PATTERN_V1_BONUS_DUAL, PATTERN_V1_PENAL_TARDIA, PATTERN_V1_LOG_COOLDOWN_S, PATTERN_V1_HYBRID_PTS_TO_PROB
     PATTERN_V1_SCORE_THR = max(0.0, float(PATTERN_V1_SCORE_THR))
     PATTERN_V1_BONUS_DUAL = max(0.0, float(PATTERN_V1_BONUS_DUAL))
     PATTERN_V1_PENAL_TARDIA = max(0.0, float(PATTERN_V1_PENAL_TARDIA))
     PATTERN_V1_LOG_COOLDOWN_S = max(5.0, float(PATTERN_V1_LOG_COOLDOWN_S))
+    PATTERN_V1_HYBRID_PTS_TO_PROB = min(0.10, max(0.0, float(PATTERN_V1_HYBRID_PTS_TO_PROB)))
 
 
 def resumen_plan_cambios_5r6m() -> list[str]:
@@ -13226,10 +13228,14 @@ async def main():
                                     if bool(PATTERN_V1_ENABLE) and bool(PATTERN_V1_USE_HYBRID_RANKING):
                                         q3_proxy, q2_proxy = _pattern_v1_thresholds_proxy()
                                         pattern_score_b, pattern_bonus_b, pattern_penal_b, pattern_total_b = pattern_score_operativo_v1(ctx, q3_proxy, q2_proxy)
+                                        # Ajuste en escala probabilística (evita mezclar puntos de pattern con prob 0..1)
+                                        k_pts = float(PATTERN_V1_HYBRID_PTS_TO_PROB)
+                                        delta_hibrido = 0.0
                                         if float(pattern_total_b) >= float(PATTERN_V1_SCORE_THR):
-                                            score_hibrido = float(score_final) + float(pattern_bonus_b) - float(pattern_penal_b)
+                                            delta_hibrido = k_pts * (float(pattern_bonus_b) - float(pattern_penal_b))
                                         else:
-                                            score_hibrido = float(score_final) - float(pattern_penal_b)
+                                            delta_hibrido = -k_pts * float(pattern_penal_b)
+                                        score_hibrido = float(score_final) + float(delta_hibrido)
                                         score_hibrido = float(max(0.0, min(1.0, score_hibrido)))
                                         _pattern_v1_log_bot(
                                             b,
@@ -13243,6 +13249,7 @@ async def main():
                                     estado_bots[b]["ia_pattern_bonus"] = float(pattern_bonus_b)
                                     estado_bots[b]["ia_pattern_penal"] = float(pattern_penal_b)
                                     estado_bots[b]["ia_score_hibrido"] = float(score_hibrido)
+                                    estado_bots[b]["ia_score_hibrido_delta"] = float(score_hibrido - float(score_final))
                                     estado_bots[b]["ia_regime_score"] = float(regime_score)
                                     estado_bots[b]["ia_evidence_n"] = int(ev_n)
                                     estado_bots[b]["ia_evidence_wr"] = float(ev_wr)
