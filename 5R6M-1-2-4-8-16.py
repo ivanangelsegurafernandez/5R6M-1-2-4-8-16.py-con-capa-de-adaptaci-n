@@ -11735,6 +11735,8 @@ DYN_ROOF_MODE_C_MIN_EVIDENCE_LB = 0.60
 DYN_ROOF_LIVE_PEAK_WINDOW = 120
 DYN_ROOF_LIVE_PEAK_MIN_SAMPLES = 20
 DYN_ROOF_LIVE_PEAK_MARGIN = 0.01
+DYN_ROOF_LIVE_PEAK_MARGIN_UNRELIABLE = 0.05
+DYN_ROOF_LIVE_PEAK_ONLY_RELIABLE = True
 # Cap superior dinámico del techo: mantiene límites altos pero evita quedarse en 85-99% sin ejecuciones.
 DYN_ROOF_MAX_CAP = 0.82
 DYN_ROOF_MAX_CAP_UNRELIABLE = 0.80
@@ -12199,7 +12201,11 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
         # mayor p_best reciente (techo vivo) con margen y candados de GAP/confirm.
         floor_gate_live = float(floor_eff if mode_c_active else floor_now)
         if modo_relajado_n15 and (not mode_c_active) and enough_live_peak:
-            floor_gate_live = float(max(floor_gate_live, live_peak - float(DYN_ROOF_LIVE_PEAK_MARGIN)))
+            if bool(DYN_ROOF_LIVE_PEAK_ONLY_RELIABLE) and (not reliable_mode):
+                floor_gate_live = float(floor_gate_live)
+            else:
+                margin_lp = float(DYN_ROOF_LIVE_PEAK_MARGIN if reliable_mode else DYN_ROOF_LIVE_PEAK_MARGIN_UNRELIABLE)
+                floor_gate_live = float(max(floor_gate_live, live_peak - margin_lp))
 
         if modo_relajado_n15:
             pass_gate = bool((float(p_best) >= float(floor_gate_live)) and bool(gap_ok))
@@ -12276,10 +12282,18 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
             and (float(p_best) >= float(floor_eff - DYN_ROOF_TRIGGER_FORCE_MARGIN))
         )
 
+        trigger_pattern = False
+        if modo_relajado_n15 and (not reliable_mode):
+            try:
+                ok_pat, _why_pat = _micro_pattern_gate_ok(str(best_bot), _ultimo_contexto_operativo_bot(str(best_bot)))
+                trigger_pattern = bool(ok_pat and (float(p_best) >= float(floor_eff)))
+            except Exception:
+                trigger_pattern = False
+
         if mode_c_active:
             trigger_ok = bool(suceso_ok)
         elif modo_relajado_n15:
-            trigger_ok = bool(suceso_ok or crossed_up or trigger_force)
+            trigger_ok = bool(suceso_ok or crossed_up or trigger_force or trigger_pattern)
         else:
             trigger_ok = bool(crossed_up)
         if warmup_mode and (not mode_c_active):
