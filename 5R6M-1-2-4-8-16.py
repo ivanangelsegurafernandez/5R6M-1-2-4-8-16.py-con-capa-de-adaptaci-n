@@ -223,6 +223,8 @@ REAL_CLASSIC_GATE = True
 IA_CALIB_THRESHOLD = 0.60
 IA_CALIB_GOAL_THRESHOLD = IA_OBJETIVO_REAL_THR  # objetivo real: medir cierres fuertes cerca de 70%
 IA_CALIB_MIN_CLOSED = 200  # mínimo recomendado para considerar estable la auditoría
+REAL_GO_N_MIN = 180
+REAL_GO_CLOSED_MIN = 50
 
 # Recomendaciones operativas conservadoras (anti-sobreconfianza)
 IA_TEMP_THR_HIGH = 0.80              # umbral temporal sugerido cuando la muestra fuerte es baja
@@ -399,24 +401,26 @@ PATTERN_V1_LAST_LOG_TS = {}
 # Fase operativa REAL por madurez: SHADOW -> MICRO -> NORMAL
 REAL_PILOT_MODE_ENABLE = True
 REAL_MICRO_REQUIRE_PATTERN = True
-REAL_MICRO_PATTERN_MIN_TOTAL = 5.0
-REAL_MICRO_REQUIRE_DUAL = True
+REAL_MICRO_PATTERN_MIN_TOTAL = 4.0
+REAL_MICRO_REQUIRE_DUAL = False
 REAL_MICRO_REQUIRE_STRUCTURE = True
-REAL_MICRO_MIN_WR = 0.52
+REAL_MICRO_MIN_WR = 0.50
 REAL_MICRO_MIN_TRADES = 40
 REAL_MICRO_TOP_K = 1
 REAL_MICRO_ALLOW_SOFT_HIGH_PROB = True
-REAL_MICRO_SOFT_MIN_PROB = 0.69
-REAL_MICRO_SOFT_MIN_SUCESO = 24.0
-REAL_MICRO_SOFT_MIN_WR = 0.49
+REAL_MICRO_SOFT_MIN_PROB = 0.66
+REAL_MICRO_SOFT_MIN_SUCESO = 18.0
+REAL_MICRO_SOFT_MIN_WR = 0.47
 REAL_SHADOW_MICRO_ENABLE = True
-REAL_SHADOW_MICRO_MIN_PROB = 0.68
-REAL_SHADOW_MICRO_MAX_ENTRIES = 3
+REAL_SHADOW_MICRO_MIN_PROB = 0.64
+REAL_SHADOW_MICRO_MAX_ENTRIES = 4
 REAL_SHADOW_MICRO_WINDOW_S = 15 * 60
 REAL_SHADOW_MICRO_TOP_K = 1
 REAL_SHADOW_MICRO_LOG_COOLDOWN_S = 20.0
 _REAL_SHADOW_MICRO_OPEN_TS = deque(maxlen=64)
 _REAL_SHADOW_MICRO_LAST_LOG_TS = 0.0
+REAL_MICRO_STRONG_GATE_FALLBACK_ENABLE = True
+REAL_MICRO_STRONG_GATE_MIN_PROB = 0.64
 
 
 def _validar_pattern_v1_config() -> None:
@@ -638,6 +642,35 @@ def _shadow_micro_gate_ok(candidatos: list, dyn_gate: dict | None = None) -> tup
         return True, "ok"
     except Exception:
         return False, "shadow_micro_err"
+
+
+def _micro_strong_gate_fallback_ok(candidatos: list, dyn_gate: dict | None = None) -> tuple[bool, str]:
+    """Fallback moderado para MICRO cuando el patrón no completa pero la compuerta está sólida."""
+    try:
+        if not bool(REAL_MICRO_STRONG_GATE_FALLBACK_ENABLE):
+            return False, "off"
+        if not candidatos:
+            return False, "sin_candidatos"
+        dgate = dyn_gate if isinstance(dyn_gate, dict) else {}
+        top = candidatos[0]
+        best_bot = str(top[1])
+        p_best = float(top[2] or 0.0)
+        confirm_need = int(dgate.get("confirm_need", DYN_ROOF_CONFIRM_TICKS) or DYN_ROOF_CONFIRM_TICKS)
+        confirm_ok = int(dgate.get("confirm_streak", 0) or 0) >= confirm_need
+        trigger_ok = bool(dgate.get("trigger_ok", False))
+        allow_gate = bool(dgate.get("allow_real", False))
+        if best_bot != str(dgate.get("best_bot", best_bot)):
+            return False, "best_mismatch"
+        if p_best < float(REAL_MICRO_STRONG_GATE_MIN_PROB):
+            return False, f"p<{REAL_MICRO_STRONG_GATE_MIN_PROB*100:.0f}%"
+        if not (confirm_ok and trigger_ok and allow_gate):
+            return False, "gate_debil"
+        hg = _estado_guardrail_ia_fuerte(force=False)
+        if bool(hg.get("hard_block", False)):
+            return False, "hard_guard"
+        return True, f"p={p_best*100:.1f}%"
+    except Exception:
+        return False, "micro_fallback_err"
 
 
 _validar_pattern_v1_config()
@@ -10444,17 +10477,17 @@ def mostrar_panel():
                 closed_go = int(rep_go.get("n_total_closed", rep_go.get("n", 0)) or 0)
                 hg_go = _estado_guardrail_ia_fuerte(force=False)
                 go_ok = bool(
-                    (n_samples_go >= 250)
-                    and (closed_go >= 80)
+                    (n_samples_go >= int(REAL_GO_N_MIN))
+                    and (closed_go >= int(REAL_GO_CLOSED_MIN))
                     and rel_go
                     and (auc_go >= 0.53)
                     and (not bool(hg_go.get("hard_block", False)))
                 )
                 go_reasons = []
-                if n_samples_go < 250:
-                    go_reasons.append("n_samples<250")
-                if closed_go < 80:
-                    go_reasons.append("closed<80")
+                if n_samples_go < int(REAL_GO_N_MIN):
+                    go_reasons.append(f"n_samples<{int(REAL_GO_N_MIN)}")
+                if closed_go < int(REAL_GO_CLOSED_MIN):
+                    go_reasons.append(f"closed<{int(REAL_GO_CLOSED_MIN)}")
                 if not rel_go:
                     go_reasons.append("reliable=false")
                 if auc_go < 0.53:
@@ -13533,8 +13566,18 @@ async def main():
                                 filtrados.sort(key=lambda x: x[0], reverse=True)
                                 candidatos = filtrados[:max(1, int(REAL_MICRO_TOP_K))]
                             else:
-                                agregar_evento("🧪 REAL=MICRO: sin patrón válido (dual+estructura+no_tardía).")
-                                candidatos = []
+                                ok_micro_fb, why_micro_fb = _micro_strong_gate_fallback_ok(candidatos, dyn_gate)
+                                if ok_micro_fb:
+                                    candidatos = candidatos[:1]
+                                    agregar_evento(
+                                        f"🟡 REAL=MICRO fallback: patrón incompleto, compuerta fuerte habilita 1 entrada ({why_micro_fb})."
+                                    )
+                                else:
+                                    agregar_evento(
+                                        "🧪 REAL=MICRO: sin patrón válido (dual+estructura+no_tardía) "
+                                        f"({why_micro_fb})."
+                                    )
+                                    candidatos = []
 
                         # ==================== AUTO-PRESELECCIÓN (MODO MANUAL) ====================
                         # Si la IA detecta señal y tú estás en manual, preselecciona el mejor bot y abre la ventana
