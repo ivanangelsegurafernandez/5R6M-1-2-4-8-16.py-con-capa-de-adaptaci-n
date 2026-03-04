@@ -340,6 +340,7 @@ DIAG_PATH = "diagnostico_pipeline_ia.json"
 ORIENTATION_RECHECK_S = 90.0
 ORIENTATION_FLIP_MIN_DELTA = 0.03
 ORIENTATION_MIN_CLOSED = 80
+ORIENTATION_REQUIRE_RELIABLE_MODEL = True  # evita invertir p->1-p durante warmup/experimental
 HARD_GATE_MAX_GAP_HIGH_BINS = 0.10
 HARD_GATE_MIN_N_FOR_HIGH_THR = 200
 INCREMENTAL_DUP_SCAN_LINES = 6000
@@ -4136,6 +4137,17 @@ def _resolver_orientacion_runtime(ttl_s: float = ORIENTATION_RECHECK_S) -> dict:
         auc = None
         auc_flip = None
         source = "none"
+
+        # En warmup/experimental, no forzar inversión de orientación:
+        # evita voltear señales verdes recientes por histórico viejo/no estable.
+        if bool(ORIENTATION_REQUIRE_RELIABLE_MODEL):
+            meta = _ORACLE_CACHE.get("meta") or leer_model_meta() or {}
+            n_samples = int(meta.get("n_samples", meta.get("n", 0)) or 0)
+            warmup = bool(meta.get("warmup_mode", n_samples < int(TRAIN_WARMUP_MIN_ROWS)))
+            reliable = bool(meta.get("reliable", False)) and (not warmup)
+            if not reliable:
+                _IA_ORIENTATION_CACHE = {"ts": now, "invert": False, "auc": None, "auc_flip": None, "source": "model_unreliable"}
+                return dict(_IA_ORIENTATION_CACHE)
 
         _ensure_ia_signals_log()
         df = _safe_read_csv_any_encoding(IA_SIGNALS_LOG)
