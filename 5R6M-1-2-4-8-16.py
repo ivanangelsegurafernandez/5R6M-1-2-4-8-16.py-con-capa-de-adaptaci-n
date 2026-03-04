@@ -13731,6 +13731,11 @@ async def main():
 
                                     ok_real = escribir_orden_real(mejor_bot, ciclo_auto)
                                     if ok_real:
+                                        if estado_real == "SHADOW":
+                                            try:
+                                                _REAL_SHADOW_MICRO_OPEN_TS.append(float(time.time()))
+                                            except Exception:
+                                                pass
                                         estado_bots[mejor_bot]["fuente"] = "IA_AUTO"
                                         estado_bots[mejor_bot]["ciclo_actual"] = ciclo_auto
                                         activo_real = REAL_OWNER_LOCK if REAL_OWNER_LOCK in BOT_NAMES else mejor_bot
