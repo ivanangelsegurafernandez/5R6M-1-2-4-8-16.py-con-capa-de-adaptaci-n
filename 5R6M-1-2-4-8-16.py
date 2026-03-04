@@ -169,13 +169,19 @@ REMATE_SIN_TOPE = False      # Limitado por MAX_CICLOS
 # === HUD / Layout ===
 HUD_LAYOUT = "bottom_center"  # Fijado en centro inferior
 HUD_VISIBLE = True       # Para ocultarlo con tecla
+# Visual/UI (no afecta lógica funcional): reducir ruido en consola
+HUD_COMPACT_MODE = True
+HUD_SHOW_TOP3_GATES = False
+HUD_SHOW_RACHA_BLOQUES = False
+HUD_EVENTS_MAX = 4
+HUD_EVENT_MAX_CHARS = 150
 
 # --- Objetivos / umbrales globales de IA ---
 IA_OBJETIVO_REAL_THR = 0.70   # objetivo de calidad REAL (meta: 70% aprox)
-IA_ACTIVACION_REAL_THR = 0.65 # perfil de arranque: habilitar REAL desde 65% con candados activos
-IA_ACTIVACION_REAL_THR_POST_N15 = 0.65  # post-n15 alineado al piso operativo de arranque
+IA_ACTIVACION_REAL_THR = 0.60 # perfil moderado: habilitar REAL desde 60% con candados activos
+IA_ACTIVACION_REAL_THR_POST_N15 = 0.58  # post-n15: bajar piso operativo para destrabar REAL moderado
 # En modo unreliable (reliable=false), permitir piso post-n15 más realista para no congelar entradas.
-IA_ACTIVACION_REAL_THR_POST_N15_UNREL = 0.60
+IA_ACTIVACION_REAL_THR_POST_N15_UNREL = 0.56
 IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES = 300
 IA_ACTIVACION_REAL_MIN_N_POR_BOT = 15   # condición: todos los bots deben tener al menos n=15
 
@@ -198,16 +204,17 @@ IA_REDUNDANCY_SCORE_PENALTY = 0.03
 IA_SENSOR_PLANO_SCORE_PENALTY = 0.04
 IA_SUCESO_SCORE_WEIGHT = 0.08
 IA_OBSERVE_THR = 0.70
-AUTO_REAL_THR = IA_OBJETIVO_REAL_THR      # techo: mantener foco en acercarse al 70%
-AUTO_REAL_THR_MIN = IA_ACTIVACION_REAL_THR  # piso: permitir activación REAL desde 85%
+AUTO_REAL_THR = IA_OBJETIVO_REAL_THR      # techo dinámico objetivo (70%)
+AUTO_REAL_BASE_FLOOR = 0.60                 # piso base dinámico para evitar bloqueo permanente en MODELO experimental
+AUTO_REAL_THR_MIN = max(float(IA_ACTIVACION_REAL_THR), float(AUTO_REAL_BASE_FLOOR))
 AUTO_REAL_TOP_Q = 0.80    # cuantíl de probs históricas para calibrar el gate REAL
 AUTO_REAL_MARGIN = 0.01   # pequeño margen para evitar quedar fuera por décimas
 AUTO_REAL_LOG_MAX_ROWS = 300  # máximo de señales históricas usadas en la calibración
 AUTO_REAL_LIVE_MIN_BOTS = 3   # mínimos bots con prob viva para calibración por tick
 
 # Umbral "operativo/UI" (señales actuales, semáforo, etc.)
-IA_METRIC_THRESHOLD = IA_ACTIVACION_REAL_THR
-# Modo clásico solicitado: activación REAL inmediata con prob IA >= 85%.
+IA_METRIC_THRESHOLD = AUTO_REAL_THR_MIN
+# Modo clásico: activación REAL con umbral operativo vigente (hoy 65%, con techo dinámico base 70%).
 # Mantiene lock de un solo bot en REAL y ciclo martingala global en HUD.
 REAL_CLASSIC_GATE = True
 
@@ -216,6 +223,8 @@ REAL_CLASSIC_GATE = True
 IA_CALIB_THRESHOLD = 0.60
 IA_CALIB_GOAL_THRESHOLD = IA_OBJETIVO_REAL_THR  # objetivo real: medir cierres fuertes cerca de 70%
 IA_CALIB_MIN_CLOSED = 200  # mínimo recomendado para considerar estable la auditoría
+REAL_GO_N_MIN = 180
+REAL_GO_CLOSED_MIN = 50
 
 # Recomendaciones operativas conservadoras (anti-sobreconfianza)
 IA_TEMP_THR_HIGH = 0.80              # umbral temporal sugerido cuando la muestra fuerte es baja
@@ -232,11 +241,11 @@ IA_OVERCONF_DYNAMIC_CAP = 0.90
 IA_CHECKPOINT_CLOSED_STEP = 20
 # Guardrail duro de salud IA (global+por bot): evita sobreconfianza con muestra inmadura.
 IA_HARD_GUARD_ENABLE = True
-IA_HARD_GUARD_RED_MIN_CLOSED = 20
+IA_HARD_GUARD_RED_MIN_CLOSED = 0
 IA_HARD_GUARD_AMBER_MIN_CLOSED = 80
-IA_HARD_GUARD_RED_MIN_AUC = 0.52
+IA_HARD_GUARD_RED_MIN_AUC = 0.48
 IA_HARD_GUARD_GREEN_MIN_AUC = 0.55
-IA_HARD_GUARD_MIN_FEATURES_RED = 5
+IA_HARD_GUARD_MIN_FEATURES_RED = 3
 IA_HARD_GUARD_MIN_FEATURES_GREEN = 6
 IA_HARD_GUARD_RED_CAP = 0.66
 IA_HARD_GUARD_AMBER_CAP = 0.66
@@ -251,7 +260,7 @@ IA_HARD_GUARD_BOT_GAP_PP = 0.18
 # Impulso por racha reciente (micro-ajuste dinámico para evitar Prob IA plana).
 IA_RACHA_BOOST_ENABLE = True
 IA_RACHA_BOOST_WINDOW = 8
-IA_RACHA_BOOST_MAX_UP = 0.07
+IA_RACHA_BOOST_MAX_UP = 0.10
 IA_RACHA_BOOST_MAX_DN = 0.05
 IA_RACHA_BOOST_MIN_WINS = 5
 IA_RACHA_BOOST_LOG_COOLDOWN_S = 25.0
@@ -263,16 +272,17 @@ IA_WARMUP_LOW_EVIDENCE_CAP_BASE = 0.80
 IA_WARMUP_LOW_EVIDENCE_CAP_POST_N15 = 0.85
 
 AUTO_REAL_ALLOW_UNRELIABLE_POST_N15 = True
-AUTO_REAL_UNRELIABLE_MIN_N = 80
-AUTO_REAL_UNRELIABLE_MIN_PROB = 0.58  # base más realista: evita bloqueo permanente cuando el modelo no escala a 63%
+AUTO_REAL_UNRELIABLE_MIN_N = 0
+AUTO_REAL_UNRELIABLE_MIN_PROB = 0.50  # modo unreliable moderado: habilita entradas cuando el modelo discrimina en 50-56%
 AUTO_REAL_UNRELIABLE_MIN_AUC = 0.48   # tolerancia leve en unreliable para no congelar AUTO con AUC marginal
-AUTO_REAL_BLOCK_WHEN_WARMUP = True    # durante warmup evita promoción AUTO en modo unreliable
+AUTO_REAL_BLOCK_WHEN_WARMUP = False   # permitir REAL moderado en LOW_DATA/warmup si compuerta dinámica valida
 # Ajuste mínimo anti-congelamiento lateral: permite bajar el umbral UNREL
 # solo cuando hay evidencia operativa consistente por bot.
 AUTO_REAL_UNREL_LATERAL_ADAPT_ENABLE = True
 AUTO_REAL_UNREL_LATERAL_MIN_N = 50
 AUTO_REAL_UNREL_LATERAL_MIN_WR = 0.50
-AUTO_REAL_UNREL_LATERAL_MIN_PROB = 0.55
+AUTO_REAL_UNREL_LATERAL_MIN_PROB = 0.50
+AUTO_REAL_UNRELIABLE_FLOOR = 0.52      # piso REAL temporal cuando reliable=false y ya hay n mínimo por bot
 # Micro-relajación gradual del umbral UNREL basada en cierres auditados reales.
 # Solo aplica cuando ya hay muestra suficiente y rendimiento sostenido.
 AUTO_REAL_UNREL_MICRO_RELAX_ENABLE = True
@@ -359,6 +369,312 @@ META_ACEPTADA = False
 MODAL_ACTIVO = False
 sonido_disparado = False
 # === FIN BLOQUE 2 ===
+
+# === BLOQUE 2.5 — PLAN OPERATIVO PATRÓN V1 (RESUMEN EJECUTIVO) ===
+# IMPORTANTE:
+# - Este bloque NO reemplaza todavía la lógica de entrada actual.
+# - Sirve para dejar la integración preparada y revisable.
+# - Los candados existentes (hard_guard/confirm/trigger/roof) se mantienen.
+PATTERN_V1_ENABLE = True
+PATTERN_V1_SCORE_THR = 6.0
+PATTERN_V1_BONUS_DUAL = 1.0
+PATTERN_V1_PENAL_TARDIA = 2.0
+PATTERN_V1_REQUIRE_CONFIRM_FULL = True   # confirm=2/2
+PATTERN_V1_REQUIRE_TRIGGER_OK = True     # trigger_ok=sí
+PATTERN_V1_USE_HYBRID_RANKING = True     # score_final = prob + bonus - penalizaciones
+PATTERN_V1_LOG_COOLDOWN_S = 25.0
+PATTERN_V1_HYBRID_PTS_TO_PROB = 0.03  # 1 punto pattern = 3pp sobre score probabilístico
+PATTERN_V1_Q3_PROXY = {
+    "rsi_9": 64.0,
+    "rsi_reversion": 0.060,
+    "es_rebote": 0.090,
+    "puntaje_estrategia": 0.28,
+    "cruce_sma": 0.62,
+    "breakout": 0.20,
+    "payout": 0.9525,
+    "racha_actual": 2.0,
+}
+PATTERN_V1_Q2_PROXY = {
+    "volatilidad": 0.049,
+}
+PATTERN_V1_LAST_LOG_TS = {}
+# Fase operativa REAL por madurez: SHADOW -> MICRO -> NORMAL
+REAL_PILOT_MODE_ENABLE = True
+REAL_MICRO_REQUIRE_PATTERN = True
+REAL_MICRO_PATTERN_MIN_TOTAL = 4.0
+REAL_MICRO_REQUIRE_DUAL = False
+REAL_MICRO_REQUIRE_STRUCTURE = True
+REAL_MICRO_MIN_WR = 0.50
+REAL_MICRO_MIN_TRADES = 40
+REAL_MICRO_TOP_K = 1
+REAL_MICRO_ALLOW_SOFT_HIGH_PROB = True
+REAL_MICRO_SOFT_MIN_PROB = 0.66
+REAL_MICRO_SOFT_MIN_SUCESO = 18.0
+REAL_MICRO_SOFT_MIN_WR = 0.47
+REAL_SHADOW_MICRO_ENABLE = True
+REAL_SHADOW_MICRO_MIN_PROB = 0.64
+REAL_SHADOW_MICRO_MAX_ENTRIES = 4
+REAL_SHADOW_MICRO_WINDOW_S = 15 * 60
+REAL_SHADOW_MICRO_TOP_K = 1
+REAL_SHADOW_MICRO_LOG_COOLDOWN_S = 20.0
+_REAL_SHADOW_MICRO_OPEN_TS = deque(maxlen=64)
+_REAL_SHADOW_MICRO_LAST_LOG_TS = 0.0
+REAL_MICRO_STRONG_GATE_FALLBACK_ENABLE = True
+REAL_MICRO_STRONG_GATE_MIN_PROB = 0.64
+
+
+def _validar_pattern_v1_config() -> None:
+    """Sanitiza parámetros para evitar valores inválidos en runtime."""
+    global PATTERN_V1_SCORE_THR, PATTERN_V1_BONUS_DUAL, PATTERN_V1_PENAL_TARDIA, PATTERN_V1_LOG_COOLDOWN_S, PATTERN_V1_HYBRID_PTS_TO_PROB
+    PATTERN_V1_SCORE_THR = max(0.0, float(PATTERN_V1_SCORE_THR))
+    PATTERN_V1_BONUS_DUAL = max(0.0, float(PATTERN_V1_BONUS_DUAL))
+    PATTERN_V1_PENAL_TARDIA = max(0.0, float(PATTERN_V1_PENAL_TARDIA))
+    PATTERN_V1_LOG_COOLDOWN_S = max(5.0, float(PATTERN_V1_LOG_COOLDOWN_S))
+    PATTERN_V1_HYBRID_PTS_TO_PROB = min(0.10, max(0.0, float(PATTERN_V1_HYBRID_PTS_TO_PROB)))
+
+
+def resumen_plan_cambios_5r6m() -> list[str]:
+    """Resumen corto de cambios planificados en 5R6M-1-2-4-8-16.py."""
+    return [
+        "1) Añadir Pattern Score compuesto (señales duales + estructura técnica).",
+        "2) Añadir veto tardío para evitar perseguir rachas verdes iniciadas.",
+        "3) Separar detección de oportunidad vs permiso final de entrada.",
+        "4) Mantener candados existentes (hard_guard, confirm, trigger, roof).",
+        "5) Usar ranking híbrido: prob_ia_oper + bonus_patron - penal_tardia - crowding.",
+        "6) Medir drift por ventanas y degradar score cuando no hay persistencia.",
+    ]
+
+
+def pattern_score_operativo_v1(features: dict, q3: dict, q2: dict) -> tuple[float, float, float, float]:
+    """Score proxy para integración gradual (sin reemplazar la decisión vigente).
+
+    Retorna: (score, bonus_dual, penal_tardia, score_final)
+    """
+    score = 0.0
+    if features.get("rsi_9", 0.0) >= q3.get("rsi_9", 1e9):
+        score += 2.0
+    if features.get("rsi_reversion", 0.0) >= q3.get("rsi_reversion", 1e9):
+        score += 2.0
+    if features.get("es_rebote", 0.0) >= q3.get("es_rebote", 1e9):
+        score += 2.0
+    if features.get("puntaje_estrategia", 0.0) >= q3.get("puntaje_estrategia", 1e9):
+        score += 1.0
+    if features.get("cruce_sma", 0.0) >= q3.get("cruce_sma", 1e9):
+        score += 1.0
+    if features.get("breakout", 0.0) >= q3.get("breakout", 1e9):
+        score += 1.0
+    if features.get("payout", 0.0) >= q3.get("payout", 1e9):
+        score += 1.0
+    if features.get("volatilidad", 1e9) <= q2.get("volatilidad", -1e9):
+        score += 1.0
+
+    dual = (
+        features.get("rsi_reversion", 0.0) >= q3.get("rsi_reversion", 1e9)
+        or features.get("es_rebote", 0.0) >= q3.get("es_rebote", 1e9)
+    )
+    bonus_dual = (
+        PATTERN_V1_BONUS_DUAL
+        if dual and features.get("rsi_9", 0.0) >= q3.get("rsi_9", 1e9)
+        else 0.0
+    )
+    penal_tardia = 0.0
+    if features.get("racha_actual", 0.0) >= q3.get("racha_actual", 1e9) and not dual:
+        penal_tardia = PATTERN_V1_PENAL_TARDIA
+
+    score_final = score + bonus_dual - penal_tardia
+    return score, bonus_dual, penal_tardia, score_final
+
+
+def _pattern_v1_thresholds_proxy() -> tuple[dict, dict]:
+    """Umbrales proxy (Q3/Q2) para operar Pattern V1 sin dependencia externa."""
+    return dict(PATTERN_V1_Q3_PROXY), dict(PATTERN_V1_Q2_PROXY)
+
+
+def _pattern_v1_log_bot(bot: str, pattern_score: float, bonus_dual: float, penal_tardia: float, score_hibrido: float) -> None:
+    """Log por bot con cooldown para auditar impacto del Pattern V1."""
+    try:
+        ahora = time.time()
+        last = float(PATTERN_V1_LAST_LOG_TS.get(bot, 0.0) or 0.0)
+        if (ahora - last) < float(PATTERN_V1_LOG_COOLDOWN_S):
+            return
+        PATTERN_V1_LAST_LOG_TS[bot] = float(ahora)
+        agregar_evento(
+            f"🧠 PatternV1 {bot}: score={pattern_score:.1f} bonus={bonus_dual:.1f} "
+            f"penal={penal_tardia:.1f} score_hibrido={score_hibrido*100:.1f}%"
+        )
+    except Exception:
+        pass
+
+
+def _resolver_estado_real(meta_live: dict | None = None) -> str:
+    """Estado operativo REAL: SHADOW, MICRO, NORMAL."""
+    try:
+        if not bool(REAL_PILOT_MODE_ENABLE):
+            return "NORMAL"
+        meta = meta_live if isinstance(meta_live, dict) else (_ORACLE_CACHE.get("meta") or leer_model_meta() or {})
+        n = int(meta.get("n_samples", meta.get("n", 0)) or 0)
+        auc = float(meta.get("auc", 0.0) or 0.0)
+        warmup = bool(meta.get("warmup_mode", n < int(TRAIN_WARMUP_MIN_ROWS)))
+        reliable = bool(meta.get("reliable", False)) and (not warmup)
+        hg = _estado_guardrail_ia_fuerte(force=False)
+        if reliable and (auc >= 0.53) and (not bool(hg.get("hard_block", False))):
+            return "NORMAL"
+        if n >= int(MIN_FIT_ROWS_PROD):
+            return "MICRO"
+        return "SHADOW"
+    except Exception:
+        return "SHADOW"
+
+
+def _micro_pattern_gate_ok(bot: str, ctx: dict | None = None) -> tuple[bool, str]:
+    """Filtro principal en MICRO: patrón dual + estructura + recencia mínima."""
+    try:
+        if not bool(REAL_MICRO_REQUIRE_PATTERN):
+            return True, "off"
+        st = estado_bots.get(bot, {}) if isinstance(estado_bots, dict) else {}
+        c = ctx if isinstance(ctx, dict) else _ultimo_contexto_operativo_bot(bot)
+        q3, q2 = _pattern_v1_thresholds_proxy()
+        p_score, p_bonus, p_penal, p_total = pattern_score_operativo_v1(c or {}, q3, q2)
+        strict_ok = True
+        why = f"pat={p_total:.1f}"
+        if float(p_total) < float(REAL_MICRO_PATTERN_MIN_TOTAL):
+            strict_ok = False
+            why = f"pat<{REAL_MICRO_PATTERN_MIN_TOTAL:.1f}"
+        if strict_ok and bool(REAL_MICRO_REQUIRE_DUAL) and float(p_bonus) <= 0.0:
+            strict_ok = False
+            why = "dual=no"
+        if strict_ok and bool(REAL_MICRO_REQUIRE_STRUCTURE):
+            breakout_ok = bool(float((c or {}).get("breakout", 0.0) or 0.0) >= float(q3.get("breakout", 1e9)))
+            cruce_ok = bool(float((c or {}).get("cruce_sma", 0.0) or 0.0) >= float(q3.get("cruce_sma", 1e9)))
+            if not (breakout_ok or cruce_ok):
+                strict_ok = False
+                why = "struct=no"
+
+        g = int(st.get("ganancias", 0) or 0)
+        d = int(st.get("perdidas", 0) or 0)
+        n = int(max(0, g + d))
+        wr = float((g + 1.0) / (n + 2.0))
+        if strict_ok and n >= int(REAL_MICRO_MIN_TRADES) and wr < float(REAL_MICRO_MIN_WR):
+            strict_ok = False
+            why = f"wr<{REAL_MICRO_MIN_WR*100:.0f}%"
+        if strict_ok and float(p_penal) > 0.0:
+            strict_ok = False
+            why = "late=veto"
+        if strict_ok:
+            return True, why
+
+        # Fallback suave: permite fluir entradas cuando la calidad viva es alta
+        # aunque el patrón dual/estructura no complete en ese tick.
+        if bool(REAL_MICRO_ALLOW_SOFT_HIGH_PROB):
+            p_oper = float(st.get("prob_ia_oper", st.get("prob_ia", 0.0)) or 0.0)
+            suceso = float(st.get("ia_suceso_idx", 0.0) or 0.0)
+            if (
+                p_oper >= float(REAL_MICRO_SOFT_MIN_PROB)
+                and suceso >= float(REAL_MICRO_SOFT_MIN_SUCESO)
+                and wr >= float(REAL_MICRO_SOFT_MIN_WR)
+                and float(p_penal) <= float(PATTERN_V1_PENAL_TARDIA)
+            ):
+                return True, f"soft:p={p_oper*100:.1f}%/s={suceso:.1f}"
+
+        return False, why
+    except Exception:
+        return False, "pattern_err"
+
+
+def _shadow_micro_quota_status(now_ts: float | None = None) -> tuple[int, int, float]:
+    """Estado de cuota para micro-REAL temporal en SHADOW."""
+    try:
+        now = float(time.time() if now_ts is None else now_ts)
+        window_s = max(60.0, float(REAL_SHADOW_MICRO_WINDOW_S))
+        while _REAL_SHADOW_MICRO_OPEN_TS and (now - float(_REAL_SHADOW_MICRO_OPEN_TS[0])) > window_s:
+            _REAL_SHADOW_MICRO_OPEN_TS.popleft()
+        used = int(len(_REAL_SHADOW_MICRO_OPEN_TS))
+        max_entries = max(1, int(REAL_SHADOW_MICRO_MAX_ENTRIES))
+        left = max(0, max_entries - used)
+        return left, used, window_s
+    except Exception:
+        return 0, 0, max(60.0, float(REAL_SHADOW_MICRO_WINDOW_S))
+
+
+def _shadow_micro_gate_ok(candidatos: list, dyn_gate: dict | None = None) -> tuple[bool, str]:
+    """Bypass seguro para permitir micro-REAL temporal aun en SHADOW."""
+    global _REAL_SHADOW_MICRO_LAST_LOG_TS
+    try:
+        if not bool(REAL_SHADOW_MICRO_ENABLE):
+            return False, "off"
+        if not candidatos:
+            return False, "sin_candidatos"
+        if not bool(_todos_bots_con_n_minimo_real()):
+            return False, "n_min_real"
+
+        dgate = dyn_gate if isinstance(dyn_gate, dict) else {}
+        confirm_need = int(dgate.get("confirm_need", DYN_ROOF_CONFIRM_TICKS) or DYN_ROOF_CONFIRM_TICKS)
+        confirm_ok = int(dgate.get("confirm_streak", 0) or 0) >= confirm_need
+        trigger_ok = bool(dgate.get("trigger_ok", False))
+        allow_gate = bool(dgate.get("allow_real", False))
+
+        best = candidatos[0]
+        best_bot = str(best[1])
+        p_best = float(best[2] or 0.0)
+        if best_bot != str(dgate.get("best_bot", best_bot)):
+            return False, "best_mismatch"
+        if p_best < float(REAL_SHADOW_MICRO_MIN_PROB):
+            return False, f"p<{REAL_SHADOW_MICRO_MIN_PROB*100:.0f}%"
+        if not (confirm_ok and trigger_ok and allow_gate):
+            return False, "gate_debil"
+
+        hg = _estado_guardrail_ia_fuerte(force=False)
+        if bool(hg.get("hard_block", False)):
+            return False, "hard_guard"
+
+        left, used, window_s = _shadow_micro_quota_status()
+        if left <= 0:
+            return False, f"quota:{used}/{max(1, int(REAL_SHADOW_MICRO_MAX_ENTRIES))}/{int(window_s//60)}m"
+
+        now = time.time()
+        if (now - float(_REAL_SHADOW_MICRO_LAST_LOG_TS or 0.0)) >= float(REAL_SHADOW_MICRO_LOG_COOLDOWN_S):
+            _REAL_SHADOW_MICRO_LAST_LOG_TS = float(now)
+            agregar_evento(
+                f"🟢 REAL=SHADOW→MICRO temporal: {best_bot} p={p_best*100:.1f}% "
+                f"confirm={int(dgate.get('confirm_streak', 0))}/{confirm_need} trigger_ok=sí "
+                f"quota={used}/{max(1, int(REAL_SHADOW_MICRO_MAX_ENTRIES))}"
+            )
+        return True, "ok"
+    except Exception:
+        return False, "shadow_micro_err"
+
+
+def _micro_strong_gate_fallback_ok(candidatos: list, dyn_gate: dict | None = None) -> tuple[bool, str]:
+    """Fallback moderado para MICRO cuando el patrón no completa pero la compuerta está sólida."""
+    try:
+        if not bool(REAL_MICRO_STRONG_GATE_FALLBACK_ENABLE):
+            return False, "off"
+        if not candidatos:
+            return False, "sin_candidatos"
+        dgate = dyn_gate if isinstance(dyn_gate, dict) else {}
+        top = candidatos[0]
+        best_bot = str(top[1])
+        p_best = float(top[2] or 0.0)
+        confirm_need = int(dgate.get("confirm_need", DYN_ROOF_CONFIRM_TICKS) or DYN_ROOF_CONFIRM_TICKS)
+        confirm_ok = int(dgate.get("confirm_streak", 0) or 0) >= confirm_need
+        trigger_ok = bool(dgate.get("trigger_ok", False))
+        allow_gate = bool(dgate.get("allow_real", False))
+        if best_bot != str(dgate.get("best_bot", best_bot)):
+            return False, "best_mismatch"
+        if p_best < float(REAL_MICRO_STRONG_GATE_MIN_PROB):
+            return False, f"p<{REAL_MICRO_STRONG_GATE_MIN_PROB*100:.0f}%"
+        if not (confirm_ok and trigger_ok and allow_gate):
+            return False, "gate_debil"
+        hg = _estado_guardrail_ia_fuerte(force=False)
+        if bool(hg.get("hard_block", False)):
+            return False, "hard_guard"
+        return True, f"p={p_best*100:.1f}%"
+    except Exception:
+        return False, "micro_fallback_err"
+
+
+_validar_pattern_v1_config()
+
 
 # === BLOQUE 3 — CONFIGURACIÓN DE REENTRENAMIENTO Y MODOS IA ===
 # === CONFIGURACIÓN DE REENTRENAMIENTO ===
@@ -4135,13 +4451,13 @@ def _estado_guardrail_ia_fuerte(force: bool = False, ttl_s: float = 20.0) -> dic
 
         red_cond = bool(
             (closed < int(IA_HARD_GUARD_RED_MIN_CLOSED))
-            or (not reliable)
             or (auc < float(IA_HARD_GUARD_RED_MIN_AUC))
             or (feat_count > 0 and feat_count < int(IA_HARD_GUARD_MIN_FEATURES_RED))
             or severe_gap
         )
         amber_cond = bool(
             (closed < int(IA_HARD_GUARD_AMBER_MIN_CLOSED))
+            or (not reliable)
             or amber_gap
         )
         green_cond = bool(
@@ -10050,7 +10366,7 @@ def mostrar_panel():
             trig_ok = bool(trigger_ok_h)
             rel_ok = bool(reliable)
             can_ok = bool(canary_live)
-            classic_ok = bool(best_prob >= float(IA_ACTIVACION_REAL_THR))
+            classic_ok = bool(best_prob >= float(AUTO_REAL_THR_MIN))
 
             p_diag = float(best_prob)
             p_model = float(best_prob)
@@ -10065,7 +10381,7 @@ def mostrar_panel():
                 ("TRIG", trig_ok),
                 ("REL", rel_ok),
                 ("CAN", can_ok),
-                ("CLASS85", classic_ok),
+                (f"CLASS{int(round(AUTO_REAL_THR_MIN*100))}", classic_ok),
             ]
             funnel_txt = " | ".join([f"{k}{'✅' if v else '❌'}" for k, v in funnel_checks])
 
@@ -10076,7 +10392,7 @@ def mostrar_panel():
                 ("TRIGGER", trig_ok, 0.0, ""),
                 ("RELIABLE", rel_ok, 0.0, ""),
                 ("CANARY", can_ok, 0.0, ""),
-                ("CLASS85", classic_ok, max(0.0, float(IA_ACTIVACION_REAL_THR) - best_prob), "%"),
+                (f"CLASS{int(round(AUTO_REAL_THR_MIN*100))}", classic_ok, max(0.0, float(AUTO_REAL_THR_MIN) - best_prob), "%"),
             ]
             principal = next((b for b in bloqueos if not b[1]), None)
             if principal is None:
@@ -10102,13 +10418,23 @@ def mostrar_panel():
             except Exception:
                 top_txt = "--"
 
-            print(padding + Fore.CYAN + f"🧪 Embudo: {funnel_txt}")
+            if bool(HUD_COMPACT_MODE):
+                failed = [k for (k, ok) in funnel_checks if not ok]
+                funnel_compact = ("OK" if not failed else ",".join(failed[:4]))
+                if len(failed) > 4:
+                    funnel_compact += f" +{len(failed)-4}"
+                print(padding + Fore.CYAN + f"🧪 Embudo: {funnel_compact}")
+            else:
+                print(padding + Fore.CYAN + f"🧪 Embudo: {funnel_txt}")
             if owner in BOT_NAMES:
                 principal_txt = f"{principal_txt} (solo nuevas entradas; REAL activo={owner})"
             decision_line = f"🧭 Decisión tick: P_diag={p_diag*100:.1f}% | P_model={p_model*100:.1f}% | P_oper={p_oper*100:.1f}% | modo={modo_score} | Bloqueo principal={principal_txt}"
             print(padding + Fore.CYAN + decision_line)
             _runtime_audit_append(decision_line)
-            print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | B-GATE={floor_gate_h*100:.1f}% | LIVE_MAX={live_peak_h*100:.1f}% (n={live_peak_n_h}) | CLASSIC={IA_ACTIVACION_REAL_THR*100:.0f}%")
+            if bool(HUD_COMPACT_MODE):
+                print(padding + Fore.CYAN + f"📏 Umbrales: UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | CLASSIC={AUTO_REAL_THR_MIN*100:.0f}%")
+            else:
+                print(padding + Fore.CYAN + f"📏 Umbrales activos: OBS={umbral_obs*100:.0f}% | UNREL={unrel_thr_live*100:.0f}% | ROOF={roof_h*100:.1f}% | FLOOR={floor_h*100:.1f}% | B-GATE={floor_gate_h*100:.1f}% | LIVE_MAX={live_peak_h*100:.1f}% (n={live_peak_n_h}) | CLASSIC={AUTO_REAL_THR_MIN*100:.0f}%")
             bloqueos_line = f"📉 Bloqueo dominante ({len(HUD_BLOQUEOS_RECIENTES)} ticks): {top_txt}"
             print(padding + Fore.CYAN + bloqueos_line)
             _runtime_audit_append(bloqueos_line)
@@ -10147,17 +10473,17 @@ def mostrar_panel():
                 closed_go = int(rep_go.get("n_total_closed", rep_go.get("n", 0)) or 0)
                 hg_go = _estado_guardrail_ia_fuerte(force=False)
                 go_ok = bool(
-                    (n_samples_go >= 250)
-                    and (closed_go >= 80)
+                    (n_samples_go >= int(REAL_GO_N_MIN))
+                    and (closed_go >= int(REAL_GO_CLOSED_MIN))
                     and rel_go
                     and (auc_go >= 0.53)
                     and (not bool(hg_go.get("hard_block", False)))
                 )
                 go_reasons = []
-                if n_samples_go < 250:
-                    go_reasons.append("n_samples<250")
-                if closed_go < 80:
-                    go_reasons.append("closed<80")
+                if n_samples_go < int(REAL_GO_N_MIN):
+                    go_reasons.append(f"n_samples<{int(REAL_GO_N_MIN)}")
+                if closed_go < int(REAL_GO_CLOSED_MIN):
+                    go_reasons.append(f"closed<{int(REAL_GO_CLOSED_MIN)}")
                 if not rel_go:
                     go_reasons.append("reliable=false")
                 if auc_go < 0.53:
@@ -10212,7 +10538,7 @@ def mostrar_panel():
                             f"CONF{conf_txt} SUC{'✅' if suceso_ok_b else '❌'} CLN{'🛑' if clone_b else 'ok'}"
                         )
 
-                    if dbg_chunks:
+                    if dbg_chunks and bool(HUD_SHOW_TOP3_GATES):
                         print(padding + Fore.CYAN + f"🔬 Gates(top3): {' | '.join(dbg_chunks)}")
             except Exception:
                 pass
@@ -10242,7 +10568,7 @@ def mostrar_panel():
                 score = (2.6 if reg == "R3" else 2.1 if reg == "R2" else 1.0 if reg == "R1" else 0.4 if reg == "R4" else 0.0) + max(0.0, acel) + max(0.0, d8 - 0.5)
                 score_racha.append((b, score, reg, lar, acel))
 
-            if resumen_racha:
+            if resumen_racha and bool(HUD_SHOW_RACHA_BLOQUES):
                 print(padding + Fore.CYAN + "🧩 Régimen racha (obs): " + " | ".join(resumen_racha[:3]))
                 if len(resumen_racha) > 3:
                     print(padding + Fore.CYAN + "                          " + " | ".join(resumen_racha[3:]))
@@ -10493,7 +10819,7 @@ def mostrar_panel():
             modo_base = modo_map.get(modo, (modo.upper() if modo != "off" else "OFF"))
 
             if modo != "off":
-                if confianza >= IA_ACTIVACION_REAL_THR:
+                if confianza >= AUTO_REAL_THR_MIN:
                     modo_color = Fore.GREEN
                 elif confianza >= 0.55:
                     modo_color = Fore.YELLOW
@@ -10982,11 +11308,20 @@ def dibujar_hud_gatewin(panel_height=8, layout=None):
     for i, line in enumerate(hud_lines):
         print(f"\x1b[{start_row + i};{start_col}H" + Fore.YELLOW + line + Fore.RESET)
 
+def _hud_trim_line(txt: str, max_chars: int | None = None) -> str:
+    try:
+        m = int(max_chars or HUD_EVENT_MAX_CHARS)
+        s = str(txt)
+        return s if len(s) <= m else (s[: max(0, m - 1)] + "…")
+    except Exception:
+        return str(txt)
+
+
 def mostrar_eventos():
     if eventos_recentes:
         print(Fore.MAGENTA + "\nEventos recientes:")
-        for ev in list(eventos_recentes)[-5:]:
-            print(Fore.MAGENTA + " - " + ev)
+        for ev in list(eventos_recentes)[-int(HUD_EVENTS_MAX):]:
+            print(Fore.MAGENTA + " - " + _hud_trim_line(ev, HUD_EVENT_MAX_CHARS))
 # === FIN BLOQUE 11 ===
 
 # === BLOQUE 12 — CONTROL MANUAL REAL Y CONDICIONES SEGURAS ===
@@ -11480,7 +11815,7 @@ def set_etapa(codigo, detalle_extra=None, anunciar=False):
 # Nueva constante para watchdog de REAL - Bajado para más reactividad
 REAL_TIMEOUT_S = 120  # 2 minutos sin actividad para aviso/rearme
 REAL_STUCK_FORCE_RELEASE_S = 90  # segundos extra tras aviso para liberar REAL si no hay cierre
-REAL_TRIGGER_MIN = IA_ACTIVACION_REAL_THR  # regla operativa: entrada REAL desde 85% o mayor
+REAL_TRIGGER_MIN = AUTO_REAL_THR_MIN  # alineado al piso base de 70% para arranque REAL
 
 # =========================================================
 # TECHO DINÁMICO + COMPUERTA REAL (anti-bug de activación baja)
@@ -11488,17 +11823,17 @@ REAL_TRIGGER_MIN = IA_ACTIVACION_REAL_THR  # regla operativa: entrada REAL desde
 # Lote de actualización del maestro (ticks de lectura IA)
 DYN_ROOF_BATCH_TICKS = 15
 # Paciencia dura antes de empezar a bajar el techo (4 lotes = 60 ticks)
-DYN_ROOF_HOLD_BATCHES = 4
+DYN_ROOF_HOLD_BATCHES = 2
 DYN_ROOF_HOLD_TICKS = DYN_ROOF_BATCH_TICKS * DYN_ROOF_HOLD_BATCHES
 # Derretido lento del techo: -0.5pp por lote tras la paciencia
-DYN_ROOF_STEP = 0.005
+DYN_ROOF_STEP = 0.010
 # Piso duro para REAL
-DYN_ROOF_FLOOR = IA_ACTIVACION_REAL_THR
+DYN_ROOF_FLOOR = AUTO_REAL_THR_MIN
 # Ventaja mínima del mejor vs segundo mejor
 DYN_ROOF_GAP = 0.03
 # Confirmación mínima (ticks consecutivos del MISMO bot)
-DYN_ROOF_CONFIRM_TICKS = 2
-DYN_ROOF_TRIGGER_FORCE_STREAK = 2
+DYN_ROOF_CONFIRM_TICKS = 1
+DYN_ROOF_TRIGGER_FORCE_STREAK = 1
 DYN_ROOF_TRIGGER_FORCE_MARGIN = 0.005
 # Tolerancia para considerar "tocado" el techo (near-roof)
 DYN_ROOF_NEAR_TOL = 0.005
@@ -11532,6 +11867,18 @@ DYN_ROOF_MODE_C_MIN_EVIDENCE_LB = 0.60
 DYN_ROOF_LIVE_PEAK_WINDOW = 120
 DYN_ROOF_LIVE_PEAK_MIN_SAMPLES = 20
 DYN_ROOF_LIVE_PEAK_MARGIN = 0.01
+DYN_ROOF_LIVE_PEAK_MARGIN_UNRELIABLE = 0.05
+DYN_ROOF_LIVE_PEAK_ONLY_RELIABLE = True
+# Trigger suave en modo unreliable para no perder entradas de alta calidad por 1 tick de latencia.
+DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_ENABLE = True
+DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MARGIN = 0.02
+DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MIN_SUCESO = 35.0
+DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MIN_PATTERN = 5.0
+DYN_ROOF_UNRELIABLE_ROOF_OFFSET = 0.03
+# Cap superior dinámico del techo: mantiene límites altos pero evita quedarse en 85-99% sin ejecuciones.
+DYN_ROOF_MAX_CAP = 0.82
+DYN_ROOF_MAX_CAP_UNRELIABLE = 0.80
+DYN_ROOF_MAX_CAP_WARMUP = 0.78
 REAL_COOLDOWN_UNTIL_TS = 0.0
 LAST_RETRAIN_ERROR = ""
 
@@ -11593,24 +11940,28 @@ def _todos_bots_con_n_minimo_real(min_n: int | None = None) -> bool:
 
 def _umbral_real_operativo_actual() -> float:
     """
-    Umbral REAL dinámico:
-    - Base 85%
-    - Post-n15: 75%
-    - Si el modelo sigue unreliable con muestra suficiente, usar piso post-n15 más realista
-      para evitar bloqueo permanente por compuerta alta.
+    Umbral REAL dinámico con piso inteligente:
+    - En modo confiable: mantiene piso AUTO_REAL_THR_MIN.
+    - En unreliable con n mínimo por bot: habilita piso moderado temporal.
     """
+    piso_conf = float(AUTO_REAL_THR_MIN)
     try:
         if _todos_bots_con_n_minimo_real():
             meta = _ORACLE_CACHE.get("meta") or leer_model_meta() or {}
             n_samples = int(meta.get("n_samples", meta.get("n", 0)) or 0)
             warmup = bool(meta.get("warmup_mode", n_samples < int(TRAIN_WARMUP_MIN_ROWS)))
             reliable = bool(meta.get("reliable", False)) and (not warmup)
-            if (not reliable) and (n_samples >= int(IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES)):
-                return float(IA_ACTIVACION_REAL_THR_POST_N15_UNREL)
-            return float(IA_ACTIVACION_REAL_THR_POST_N15)
+
+            if (not reliable):
+                piso_unrel = float(max(0.50, float(AUTO_REAL_UNRELIABLE_FLOOR)))
+                if n_samples >= int(IA_ACTIVACION_REAL_THR_POST_N15_UNREL_MIN_SAMPLES):
+                    return float(max(piso_unrel, float(IA_ACTIVACION_REAL_THR_POST_N15_UNREL)))
+                return float(max(piso_unrel, float(IA_ACTIVACION_REAL_THR)))
+
+            return float(max(piso_conf, float(IA_ACTIVACION_REAL_THR_POST_N15)))
     except Exception:
         pass
-    return float(IA_ACTIVACION_REAL_THR)
+    return float(max(piso_conf, float(IA_ACTIVACION_REAL_THR)))
 
 
 def _n_minimo_real_status() -> tuple[int, int]:
@@ -11761,7 +12112,7 @@ def _umbral_unrel_operativo(best_bot: str | None, best_prob: float | None = None
     try:
         base = float(AUTO_REAL_UNRELIABLE_MIN_PROB)
         mr = _calcular_micro_relax_unrel(force=False)
-        base = float(max(0.55, base - float(mr.get("delta", 0.0) or 0.0)))
+        base = float(max(0.50, base - float(mr.get("delta", 0.0) or 0.0)))
         if not bool(AUTO_REAL_UNREL_LATERAL_ADAPT_ENABLE):
             return base
         if not isinstance(best_bot, str) or (best_bot not in BOT_NAMES):
@@ -11797,7 +12148,7 @@ def _umbral_unrel_operativo(best_bot: str | None, best_prob: float | None = None
         if (len(vals) >= 24) and (n_bot >= 40) and (wr_bot >= 0.48):
             q80 = float(np.quantile(np.asarray(vals, dtype=float), 0.80))
             # margen pequeño: pedimos estar cerca del percentil alto reciente
-            thr_q = float(max(0.55, min(base, q80 - 0.01)))
+            thr_q = float(max(0.50, min(base, q80 - 0.01)))
             if p_best >= (thr_q - 0.01):
                 return float(thr_q)
 
@@ -11935,11 +12286,20 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
                     DYN_ROOF_STATE["melt_batches_applied"] = int(batches_now)
 
         roof = float(DYN_ROOF_STATE.get("roof", floor_now) or floor_now)
+        max_cap = float(DYN_ROOF_MAX_CAP)
+        if warmup_mode:
+            max_cap = min(max_cap, float(DYN_ROOF_MAX_CAP_WARMUP))
+        elif not reliable_mode:
+            max_cap = min(max_cap, float(DYN_ROOF_MAX_CAP_UNRELIABLE))
+        roof = float(max(float(floor_now), min(float(roof), float(max_cap))))
+        DYN_ROOF_STATE["roof"] = float(roof)
         penalty = float(DYN_ROOF_LOW_N_PENALTY) if int(n_best) < int(DYN_ROOF_LOW_N_MIN) else 0.0
         roof_eff = float(roof + penalty)
         crowding = bool(crowd_count >= int(DYN_ROOF_CROWD_MIN_BOTS))
         if crowding:
             roof_eff = float(roof_eff + float(DYN_ROOF_CROWD_EXTRA_ROOF))
+        if modo_relajado_n15 and (not reliable_mode):
+            roof_eff = float(max(float(floor_now), float(roof_eff - float(DYN_ROOF_UNRELIABLE_ROOF_OFFSET))))
 
         # GAP dinámico:
         # - Si solo hay 1 bot válido, no se bloquea por GAP.
@@ -11981,7 +12341,11 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
         # mayor p_best reciente (techo vivo) con margen y candados de GAP/confirm.
         floor_gate_live = float(floor_eff if mode_c_active else floor_now)
         if modo_relajado_n15 and (not mode_c_active) and enough_live_peak:
-            floor_gate_live = float(max(floor_gate_live, live_peak - float(DYN_ROOF_LIVE_PEAK_MARGIN)))
+            if bool(DYN_ROOF_LIVE_PEAK_ONLY_RELIABLE) and (not reliable_mode):
+                floor_gate_live = float(floor_gate_live)
+            else:
+                margin_lp = float(DYN_ROOF_LIVE_PEAK_MARGIN if reliable_mode else DYN_ROOF_LIVE_PEAK_MARGIN_UNRELIABLE)
+                floor_gate_live = float(max(floor_gate_live, live_peak - margin_lp))
 
         if modo_relajado_n15:
             pass_gate = bool((float(p_best) >= float(floor_gate_live)) and bool(gap_ok))
@@ -12058,10 +12422,33 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
             and (float(p_best) >= float(floor_eff - DYN_ROOF_TRIGGER_FORCE_MARGIN))
         )
 
+        trigger_pattern = False
+        trigger_soft = False
+        if modo_relajado_n15 and (not reliable_mode):
+            try:
+                ctx_best = _ultimo_contexto_operativo_bot(str(best_bot))
+                ok_pat, _why_pat = _micro_pattern_gate_ok(str(best_bot), ctx_best)
+                trigger_pattern = bool(ok_pat and (float(p_best) >= float(floor_eff)))
+
+                if bool(DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_ENABLE):
+                    q3p, q2p = _pattern_v1_thresholds_proxy()
+                    _ps, _pb, _pp, _pt = pattern_score_operativo_v1(ctx_best or {}, q3p, q2p)
+                    suceso_idx_best = float(estado_bots.get(str(best_bot), {}).get("ia_suceso_idx", 0.0) or 0.0)
+                    near_roof_soft = bool(float(p_best) >= float(max(float(floor_eff), float(roof_eff - DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MARGIN))))
+                    confirm_soft = bool(int(confirm_streak) >= max(1, int(confirm_need) - 1))
+                    trigger_soft = bool(
+                        near_roof_soft
+                        and confirm_soft
+                        and ((suceso_idx_best >= float(DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MIN_SUCESO)) or (float(_pt) >= float(DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MIN_PATTERN)))
+                    )
+            except Exception:
+                trigger_pattern = False
+                trigger_soft = False
+
         if mode_c_active:
             trigger_ok = bool(suceso_ok)
         elif modo_relajado_n15:
-            trigger_ok = bool(suceso_ok or crossed_up or trigger_force)
+            trigger_ok = bool(suceso_ok or crossed_up or trigger_force or trigger_pattern or trigger_soft)
         else:
             trigger_ok = bool(crossed_up)
         if warmup_mode and (not mode_c_active):
@@ -12349,7 +12736,7 @@ async def cargar_datos_bot(bot, token_actual):
                     elif resultado == "PÉRDIDA":
                         estado_bots[bot]["ia_fallos"] += 1
 
-                if prob_senal is not None and prob_senal >= float(IA_ACTIVACION_REAL_THR):
+                if prob_senal is not None and prob_senal >= float(AUTO_REAL_THR_MIN):
                     IA90_stats[bot]["n"] += 1
                     if resultado == "GANANCIA":
                         IA90_stats[bot]["ok"] += 1
@@ -13078,11 +13465,41 @@ async def main():
                                     if sensor_plano_b:
                                         score_final = float(score_final) - float(IA_SENSOR_PLANO_SCORE_PENALTY)
 
+                                    # Pattern V1 (gradual): score híbrido detrás de flag.
+                                    pattern_score_b = 0.0
+                                    pattern_bonus_b = 0.0
+                                    pattern_penal_b = 0.0
+                                    score_hibrido = float(score_final)
+                                    if bool(PATTERN_V1_ENABLE) and bool(PATTERN_V1_USE_HYBRID_RANKING):
+                                        q3_proxy, q2_proxy = _pattern_v1_thresholds_proxy()
+                                        pattern_score_b, pattern_bonus_b, pattern_penal_b, pattern_total_b = pattern_score_operativo_v1(ctx, q3_proxy, q2_proxy)
+                                        # Ajuste en escala probabilística (evita mezclar puntos de pattern con prob 0..1)
+                                        k_pts = float(PATTERN_V1_HYBRID_PTS_TO_PROB)
+                                        delta_hibrido = 0.0
+                                        if float(pattern_total_b) >= float(PATTERN_V1_SCORE_THR):
+                                            delta_hibrido = k_pts * (float(pattern_bonus_b) - float(pattern_penal_b))
+                                        else:
+                                            delta_hibrido = -k_pts * float(pattern_penal_b)
+                                        score_hibrido = float(score_final) + float(delta_hibrido)
+                                        score_hibrido = float(max(0.0, min(1.0, score_hibrido)))
+                                        _pattern_v1_log_bot(
+                                            b,
+                                            pattern_score=float(pattern_score_b),
+                                            bonus_dual=float(pattern_bonus_b),
+                                            penal_tardia=float(pattern_penal_b),
+                                            score_hibrido=float(score_hibrido),
+                                        )
+
+                                    estado_bots[b]["ia_pattern_score"] = float(pattern_score_b)
+                                    estado_bots[b]["ia_pattern_bonus"] = float(pattern_bonus_b)
+                                    estado_bots[b]["ia_pattern_penal"] = float(pattern_penal_b)
+                                    estado_bots[b]["ia_score_hibrido"] = float(score_hibrido)
+                                    estado_bots[b]["ia_score_hibrido_delta"] = float(score_hibrido - float(score_final))
                                     estado_bots[b]["ia_regime_score"] = float(regime_score)
                                     estado_bots[b]["ia_evidence_n"] = int(ev_n)
                                     estado_bots[b]["ia_evidence_wr"] = float(ev_wr)
 
-                                    candidatos.append((float(score_final), b, float(p), float(p_post), float(regime_score), int(ev_n), float(ev_wr), float(ev_lb)))
+                                    candidatos.append((float(score_hibrido), b, float(p), float(p_post), float(regime_score), int(ev_n), float(ev_wr), float(ev_lb)))
                                 except Exception:
                                     continue
 
@@ -13105,6 +13522,58 @@ async def main():
                                         f"⚠️ Saldo insuficiente para C1: faltan {falta:.2f} USD (C1={costo_ciclo1:.2f})."
                                     )
                                 DYN_ROOF_STATE["last_low_balance_warn_ts"] = float(ahora_warn)
+
+                        # Estado operativo REAL (SOMBRA -> MICRO -> NORMAL)
+                        try:
+                            estado_real = _resolver_estado_real(None)
+                        except Exception:
+                            estado_real = "SHADOW"
+
+                        if candidatos and estado_real == "SHADOW":
+                            ok_shadow_micro, why_shadow_micro = _shadow_micro_gate_ok(candidatos, dyn_gate)
+                            if ok_shadow_micro:
+                                candidatos = candidatos[:max(1, int(REAL_SHADOW_MICRO_TOP_K))]
+                            else:
+                                if isinstance(why_shadow_micro, str) and why_shadow_micro.startswith("quota:"):
+                                    try:
+                                        left_q, used_q, window_q = _shadow_micro_quota_status()
+                                        agregar_evento(
+                                            f"🕶️ REAL=SHADOW: cuota micro agotada ({used_q}/{max(1, int(REAL_SHADOW_MICRO_MAX_ENTRIES))} en {int(window_q//60)}m)."
+                                        )
+                                    except Exception:
+                                        agregar_evento("🕶️ REAL=SHADOW: cuota micro agotada.")
+                                else:
+                                    agregar_evento(
+                                        "🕶️ REAL=SHADOW: sin madurez suficiente, se mantiene solo observación "
+                                        f"({why_shadow_micro})."
+                                    )
+                                candidatos = []
+                        elif candidatos and estado_real == "MICRO":
+                            filtrados = []
+                            for cand in candidatos:
+                                try:
+                                    _, b_c, _, _, _, _, _, _ = cand
+                                    ok_pat, why_pat = _micro_pattern_gate_ok(str(b_c), _ultimo_contexto_operativo_bot(str(b_c)))
+                                    if ok_pat:
+                                        filtrados.append(cand)
+                                except Exception:
+                                    continue
+                            if filtrados:
+                                filtrados.sort(key=lambda x: x[0], reverse=True)
+                                candidatos = filtrados[:max(1, int(REAL_MICRO_TOP_K))]
+                            else:
+                                ok_micro_fb, why_micro_fb = _micro_strong_gate_fallback_ok(candidatos, dyn_gate)
+                                if ok_micro_fb:
+                                    candidatos = candidatos[:1]
+                                    agregar_evento(
+                                        f"🟡 REAL=MICRO fallback: patrón incompleto, compuerta fuerte habilita 1 entrada ({why_micro_fb})."
+                                    )
+                                else:
+                                    agregar_evento(
+                                        "🧪 REAL=MICRO: sin patrón válido (dual+estructura+no_tardía) "
+                                        f"({why_micro_fb})."
+                                    )
+                                    candidatos = []
 
                         # ==================== AUTO-PRESELECCIÓN (MODO MANUAL) ====================
                         # Si la IA detecta señal y tú estás en manual, preselecciona el mejor bot y abre la ventana
@@ -13223,7 +13692,7 @@ async def main():
                                     dgate = dyn_gate if isinstance(dyn_gate, dict) else {}
                                     gate_strong_unrel = bool(
                                         AUTO_REAL_UNRELIABLE_ALLOW_STRONG_GATE
-                                        and (not bool(guard_hard.get("active", False)))
+                                        and (not bool(guard_hard.get("hard_block", False)))
                                         and bool(dgate.get("allow_real", False))
                                         and bool(dgate.get("trigger_ok", False))
                                         and (float(dgate.get("p_best", 0.0) or 0.0) >= float(AUTO_REAL_UNRELIABLE_GATE_MIN_PROB))
@@ -13301,6 +13770,11 @@ async def main():
 
                                     ok_real = escribir_orden_real(mejor_bot, ciclo_auto)
                                     if ok_real:
+                                        if estado_real == "SHADOW":
+                                            try:
+                                                _REAL_SHADOW_MICRO_OPEN_TS.append(float(time.time()))
+                                            except Exception:
+                                                pass
                                         estado_bots[mejor_bot]["fuente"] = "IA_AUTO"
                                         estado_bots[mejor_bot]["ciclo_actual"] = ciclo_auto
                                         activo_real = REAL_OWNER_LOCK if REAL_OWNER_LOCK in BOT_NAMES else mejor_bot
