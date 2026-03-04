@@ -2147,6 +2147,10 @@ def escribir_orden_real(bot: str, ciclo: int) -> bool:
             agregar_evento("🟢 MARTI-AUDIT: apertura explícita en C1 (nuevo ciclo confirmado).")
         _marcar_compuerta_real_consumida()
         DYN_ROOF_STATE["last_real_open_ts"] = float(time.time())
+        try:
+            _REAL_SHADOW_MICRO_OPEN_TS.append(float(time.time()))
+        except Exception:
+            pass
     return ok
 # === FIN PATCH REAL INMEDIATO ===
 # === IA ACK (handshake maestro→bot: confirma que el PRE-TRADE ya fue evaluado) ===
