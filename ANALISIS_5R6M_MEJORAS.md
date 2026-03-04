@@ -197,3 +197,56 @@ Si baja, no escalar exposición REAL aunque la probabilidad suba.
 - Tu hipótesis principal es correcta: el sistema parece mezclar **estado de ciclo activo** con **autorización de nueva entrada** en la visualización.
 - La mejora clave no es “subir techo sí/no” aislado, sino **unificar autoridad de decisión + sincronía de HUD + reglas separadas para C2/C6 vs entrada fresca**.
 - Solo después de esa limpieza conviene afinar el `roof_dynamic`; de lo contrario, cualquier ajuste de umbral se vuelve difícil de interpretar y fácil de sobreajustar.
+
+## Respuesta directa: ¿los candados están muy duros para invertir más seguido?
+
+### Diagnóstico corto
+
+**Sí, hoy están duros para frecuencia** (especialmente en warmup), pero **no necesariamente están “mal” para riesgo**.
+
+Por lo observado en HUD:
+
+- `reliable=false` + `warmup` está actuando como bloqueo dominante.
+- `ROOF` relativamente alto en modo operativo (77–78%) filtra muchas señales aunque el candidato salga “alto” en un tick.
+- Anti-repetición está frenando continuidad en C2 cuando la lógica de ciclo no está separada de entrada fresca.
+
+Resultado práctico: el sistema favorece **pocas entradas** y evita sobreoperar, pero también puede perder continuidad útil cuando aparece un candidato fuerte repetido.
+
+### Regla de equilibrio (frecuencia vs calidad)
+
+No conviene “abrir todo” ni dejarlo tan rígido. La forma estable es usar un **perfil por fase**:
+
+1. **Warmup / confiabilidad baja**
+   - Mantener candados duros para REAL.
+   - Permitir más observación/DEMO para recolectar evidencia.
+2. **Transición (muestra intermedia)**
+   - Aflojar 1 nivel el techo dinámico solo si mejora la calibración por buckets.
+   - Mantener guardia anti-sobreconfianza en 90–100.
+3. **Maduro (reliable=true sostenido)**
+   - Permitir más frecuencia REAL con compuerta adaptativa y control por bot.
+
+### Cómo saber si aflojar candados sin romper el sistema
+
+Aflojar solo si se cumplen **dos condiciones a la vez**:
+
+- Calibración aceptable (gap en bucket 90–100 controlado).
+- Drawdown estable por ciclo (sin deterioro en 2 checkpoints seguidos).
+
+Si una de las dos falla, se vuelve al perfil anterior.
+
+### Propuesta concreta para “más seguidas” sin desorden
+
+1. Mantener `ROOF` actual para entrada fresca, pero crear tratamiento distinto para continuidad:
+   - **Fresh-entry**: candado actual (más estricto).
+   - **Cycle-locked C2..C6**: candado específico de ciclo (menos penalizado por anti-repeat).
+2. Cuando `p_oper >= 90%` y la señal está bloqueada por warmup/reliable, marcar explícitamente `HI_CONF_BLOCKED` (alta convicción, no operable aún).
+3. Ajustar por pasos pequeños y medibles (no saltos grandes):
+   - Cambios graduales del techo/floor.
+   - Evaluación cada +20 cierres.
+   - Rollback automático si cae precisión o sube drawdown.
+
+### Conclusión práctica
+
+- **Sí**, para el objetivo de “más inversiones seguidas”, los candados actuales están del lado conservador.
+- **Pero** no deben relajarse de golpe: primero separar continuidad de ciclo vs entrada fresca y gobernar por calibración + drawdown.
+- La meta correcta no es solo “entrar más”, sino **entrar más cuando la probabilidad alta sea confiable de verdad**.
