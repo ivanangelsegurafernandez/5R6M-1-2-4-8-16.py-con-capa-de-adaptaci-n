@@ -409,6 +409,14 @@ REAL_MICRO_ALLOW_SOFT_HIGH_PROB = True
 REAL_MICRO_SOFT_MIN_PROB = 0.69
 REAL_MICRO_SOFT_MIN_SUCESO = 24.0
 REAL_MICRO_SOFT_MIN_WR = 0.49
+REAL_SHADOW_MICRO_ENABLE = True
+REAL_SHADOW_MICRO_MIN_PROB = 0.68
+REAL_SHADOW_MICRO_MAX_ENTRIES = 3
+REAL_SHADOW_MICRO_WINDOW_S = 15 * 60
+REAL_SHADOW_MICRO_TOP_K = 1
+REAL_SHADOW_MICRO_LOG_COOLDOWN_S = 20.0
+_REAL_SHADOW_MICRO_OPEN_TS = deque(maxlen=64)
+_REAL_SHADOW_MICRO_LAST_LOG_TS = 0.0
 
 
 def _validar_pattern_v1_config() -> None:
@@ -567,6 +575,69 @@ def _micro_pattern_gate_ok(bot: str, ctx: dict | None = None) -> tuple[bool, str
         return False, why
     except Exception:
         return False, "pattern_err"
+
+
+def _shadow_micro_quota_status(now_ts: float | None = None) -> tuple[int, int, float]:
+    """Estado de cuota para micro-REAL temporal en SHADOW."""
+    try:
+        now = float(time.time() if now_ts is None else now_ts)
+        window_s = max(60.0, float(REAL_SHADOW_MICRO_WINDOW_S))
+        while _REAL_SHADOW_MICRO_OPEN_TS and (now - float(_REAL_SHADOW_MICRO_OPEN_TS[0])) > window_s:
+            _REAL_SHADOW_MICRO_OPEN_TS.popleft()
+        used = int(len(_REAL_SHADOW_MICRO_OPEN_TS))
+        max_entries = max(1, int(REAL_SHADOW_MICRO_MAX_ENTRIES))
+        left = max(0, max_entries - used)
+        return left, used, window_s
+    except Exception:
+        return 0, 0, max(60.0, float(REAL_SHADOW_MICRO_WINDOW_S))
+
+
+def _shadow_micro_gate_ok(candidatos: list, dyn_gate: dict | None = None) -> tuple[bool, str]:
+    """Bypass seguro para permitir micro-REAL temporal aun en SHADOW."""
+    global _REAL_SHADOW_MICRO_LAST_LOG_TS
+    try:
+        if not bool(REAL_SHADOW_MICRO_ENABLE):
+            return False, "off"
+        if not candidatos:
+            return False, "sin_candidatos"
+        if not bool(_todos_bots_con_n_minimo_real()):
+            return False, "n_min_real"
+
+        dgate = dyn_gate if isinstance(dyn_gate, dict) else {}
+        confirm_need = int(dgate.get("confirm_need", DYN_ROOF_CONFIRM_TICKS) or DYN_ROOF_CONFIRM_TICKS)
+        confirm_ok = int(dgate.get("confirm_streak", 0) or 0) >= confirm_need
+        trigger_ok = bool(dgate.get("trigger_ok", False))
+        allow_gate = bool(dgate.get("allow_real", False))
+
+        best = candidatos[0]
+        best_bot = str(best[1])
+        p_best = float(best[2] or 0.0)
+        if best_bot != str(dgate.get("best_bot", best_bot)):
+            return False, "best_mismatch"
+        if p_best < float(REAL_SHADOW_MICRO_MIN_PROB):
+            return False, f"p<{REAL_SHADOW_MICRO_MIN_PROB*100:.0f}%"
+        if not (confirm_ok and trigger_ok and allow_gate):
+            return False, "gate_debil"
+
+        hg = _estado_guardrail_ia_fuerte(force=False)
+        if bool(hg.get("hard_block", False)):
+            return False, "hard_guard"
+
+        left, used, window_s = _shadow_micro_quota_status()
+        if left <= 0:
+            return False, f"quota:{used}/{max(1, int(REAL_SHADOW_MICRO_MAX_ENTRIES))}/{int(window_s//60)}m"
+
+        now = time.time()
+        if (now - float(_REAL_SHADOW_MICRO_LAST_LOG_TS or 0.0)) >= float(REAL_SHADOW_MICRO_LOG_COOLDOWN_S):
+            _REAL_SHADOW_MICRO_LAST_LOG_TS = float(now)
+            agregar_evento(
+                f"🟢 REAL=SHADOW→MICRO temporal: {best_bot} p={p_best*100:.1f}% "
+                f"confirm={int(dgate.get('confirm_streak', 0))}/{confirm_need} trigger_ok=sí "
+                f"quota={used}/{max(1, int(REAL_SHADOW_MICRO_MAX_ENTRIES))}"
+            )
+        return True, "ok"
+    except Exception:
+        return False, "shadow_micro_err"
 
 
 _validar_pattern_v1_config()
@@ -2037,6 +2108,10 @@ def escribir_orden_real(bot: str, ciclo: int) -> bool:
             agregar_evento("🟢 MARTI-AUDIT: apertura explícita en C1 (nuevo ciclo confirmado).")
         _marcar_compuerta_real_consumida()
         DYN_ROOF_STATE["last_real_open_ts"] = float(time.time())
+        try:
+            _REAL_SHADOW_MICRO_OPEN_TS.append(float(time.time()))
+        except Exception:
+            pass
     return ok
 # === FIN PATCH REAL INMEDIATO ===
 # === IA ACK (handshake maestro→bot: confirma que el PRE-TRADE ya fue evaluado) ===
@@ -13426,8 +13501,24 @@ async def main():
                             estado_real = "SHADOW"
 
                         if candidatos and estado_real == "SHADOW":
-                            agregar_evento("🕶️ REAL=SHADOW: sin madurez suficiente, se mantiene solo observación.")
-                            candidatos = []
+                            ok_shadow_micro, why_shadow_micro = _shadow_micro_gate_ok(candidatos, dyn_gate)
+                            if ok_shadow_micro:
+                                candidatos = candidatos[:max(1, int(REAL_SHADOW_MICRO_TOP_K))]
+                            else:
+                                if isinstance(why_shadow_micro, str) and why_shadow_micro.startswith("quota:"):
+                                    try:
+                                        left_q, used_q, window_q = _shadow_micro_quota_status()
+                                        agregar_evento(
+                                            f"🕶️ REAL=SHADOW: cuota micro agotada ({used_q}/{max(1, int(REAL_SHADOW_MICRO_MAX_ENTRIES))} en {int(window_q//60)}m)."
+                                        )
+                                    except Exception:
+                                        agregar_evento("🕶️ REAL=SHADOW: cuota micro agotada.")
+                                else:
+                                    agregar_evento(
+                                        "🕶️ REAL=SHADOW: sin madurez suficiente, se mantiene solo observación "
+                                        f"({why_shadow_micro})."
+                                    )
+                                candidatos = []
                         elif candidatos and estado_real == "MICRO":
                             filtrados = []
                             for cand in candidatos:
