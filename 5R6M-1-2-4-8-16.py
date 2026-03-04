@@ -399,12 +399,16 @@ PATTERN_V1_LAST_LOG_TS = {}
 # Fase operativa REAL por madurez: SHADOW -> MICRO -> NORMAL
 REAL_PILOT_MODE_ENABLE = True
 REAL_MICRO_REQUIRE_PATTERN = True
-REAL_MICRO_PATTERN_MIN_TOTAL = 6.0
+REAL_MICRO_PATTERN_MIN_TOTAL = 5.0
 REAL_MICRO_REQUIRE_DUAL = True
 REAL_MICRO_REQUIRE_STRUCTURE = True
 REAL_MICRO_MIN_WR = 0.52
 REAL_MICRO_MIN_TRADES = 40
 REAL_MICRO_TOP_K = 1
+REAL_MICRO_ALLOW_SOFT_HIGH_PROB = True
+REAL_MICRO_SOFT_MIN_PROB = 0.69
+REAL_MICRO_SOFT_MIN_SUCESO = 24.0
+REAL_MICRO_SOFT_MIN_WR = 0.49
 
 
 def _validar_pattern_v1_config() -> None:
@@ -519,24 +523,48 @@ def _micro_pattern_gate_ok(bot: str, ctx: dict | None = None) -> tuple[bool, str
         c = ctx if isinstance(ctx, dict) else _ultimo_contexto_operativo_bot(bot)
         q3, q2 = _pattern_v1_thresholds_proxy()
         p_score, p_bonus, p_penal, p_total = pattern_score_operativo_v1(c or {}, q3, q2)
+        strict_ok = True
+        why = f"pat={p_total:.1f}"
         if float(p_total) < float(REAL_MICRO_PATTERN_MIN_TOTAL):
-            return False, f"pat<{REAL_MICRO_PATTERN_MIN_TOTAL:.1f}"
-        if bool(REAL_MICRO_REQUIRE_DUAL) and float(p_bonus) <= 0.0:
-            return False, "dual=no"
-        if bool(REAL_MICRO_REQUIRE_STRUCTURE):
+            strict_ok = False
+            why = f"pat<{REAL_MICRO_PATTERN_MIN_TOTAL:.1f}"
+        if strict_ok and bool(REAL_MICRO_REQUIRE_DUAL) and float(p_bonus) <= 0.0:
+            strict_ok = False
+            why = "dual=no"
+        if strict_ok and bool(REAL_MICRO_REQUIRE_STRUCTURE):
             breakout_ok = bool(float((c or {}).get("breakout", 0.0) or 0.0) >= float(q3.get("breakout", 1e9)))
             cruce_ok = bool(float((c or {}).get("cruce_sma", 0.0) or 0.0) >= float(q3.get("cruce_sma", 1e9)))
             if not (breakout_ok or cruce_ok):
-                return False, "struct=no"
+                strict_ok = False
+                why = "struct=no"
+
         g = int(st.get("ganancias", 0) or 0)
         d = int(st.get("perdidas", 0) or 0)
         n = int(max(0, g + d))
         wr = float((g + 1.0) / (n + 2.0))
-        if n >= int(REAL_MICRO_MIN_TRADES) and wr < float(REAL_MICRO_MIN_WR):
-            return False, f"wr<{REAL_MICRO_MIN_WR*100:.0f}%"
-        if float(p_penal) > 0.0:
-            return False, "late=veto"
-        return True, f"pat={p_total:.1f}"
+        if strict_ok and n >= int(REAL_MICRO_MIN_TRADES) and wr < float(REAL_MICRO_MIN_WR):
+            strict_ok = False
+            why = f"wr<{REAL_MICRO_MIN_WR*100:.0f}%"
+        if strict_ok and float(p_penal) > 0.0:
+            strict_ok = False
+            why = "late=veto"
+        if strict_ok:
+            return True, why
+
+        # Fallback suave: permite fluir entradas cuando la calidad viva es alta
+        # aunque el patrón dual/estructura no complete en ese tick.
+        if bool(REAL_MICRO_ALLOW_SOFT_HIGH_PROB):
+            p_oper = float(st.get("prob_ia_oper", st.get("prob_ia", 0.0)) or 0.0)
+            suceso = float(st.get("ia_suceso_idx", 0.0) or 0.0)
+            if (
+                p_oper >= float(REAL_MICRO_SOFT_MIN_PROB)
+                and suceso >= float(REAL_MICRO_SOFT_MIN_SUCESO)
+                and wr >= float(REAL_MICRO_SOFT_MIN_WR)
+                and float(p_penal) <= float(PATTERN_V1_PENAL_TARDIA)
+            ):
+                return True, f"soft:p={p_oper*100:.1f}%/s={suceso:.1f}"
+
+        return False, why
     except Exception:
         return False, "pattern_err"
 
@@ -11742,6 +11770,7 @@ DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_ENABLE = True
 DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MARGIN = 0.02
 DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MIN_SUCESO = 35.0
 DYN_ROOF_UNRELIABLE_TRIGGER_SOFT_MIN_PATTERN = 5.0
+DYN_ROOF_UNRELIABLE_ROOF_OFFSET = 0.03
 # Cap superior dinámico del techo: mantiene límites altos pero evita quedarse en 85-99% sin ejecuciones.
 DYN_ROOF_MAX_CAP = 0.82
 DYN_ROOF_MAX_CAP_UNRELIABLE = 0.80
@@ -12165,6 +12194,8 @@ def _actualizar_compuerta_techo_dinamico() -> dict:
         crowding = bool(crowd_count >= int(DYN_ROOF_CROWD_MIN_BOTS))
         if crowding:
             roof_eff = float(roof_eff + float(DYN_ROOF_CROWD_EXTRA_ROOF))
+        if modo_relajado_n15 and (not reliable_mode):
+            roof_eff = float(max(float(floor_now), float(roof_eff - float(DYN_ROOF_UNRELIABLE_ROOF_OFFSET))))
 
         # GAP dinámico:
         # - Si solo hay 1 bot válido, no se bloquea por GAP.
