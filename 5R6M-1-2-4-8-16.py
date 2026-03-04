@@ -249,6 +249,7 @@ IA_HARD_GUARD_MIN_FEATURES_RED = 3
 IA_HARD_GUARD_MIN_FEATURES_GREEN = 6
 IA_HARD_GUARD_RED_CAP = 0.66
 IA_HARD_GUARD_AMBER_CAP = 0.66
+IA_HARD_GUARD_RED_REQUIRE_MODEL_READY = True  # evita RED duro por AUC=0 cuando aún no existe modelo válido
 IA_HARD_GUARD_SEVERE_GAP_MIN_N = 10
 IA_HARD_GUARD_SEVERE_OVERCONF_GAP_PP = 0.25
 IA_HARD_GUARD_AMBER_OVERCONF_GAP_PP = 0.15
@@ -412,7 +413,7 @@ REAL_MICRO_SOFT_MIN_PROB = 0.66
 REAL_MICRO_SOFT_MIN_SUCESO = 18.0
 REAL_MICRO_SOFT_MIN_WR = 0.47
 REAL_SHADOW_MICRO_ENABLE = True
-REAL_SHADOW_MICRO_MIN_PROB = 0.64
+REAL_SHADOW_MICRO_MIN_PROB = 0.60
 REAL_SHADOW_MICRO_MAX_ENTRIES = 4
 REAL_SHADOW_MICRO_WINDOW_S = 15 * 60
 REAL_SHADOW_MICRO_TOP_K = 1
@@ -421,6 +422,10 @@ _REAL_SHADOW_MICRO_OPEN_TS = deque(maxlen=64)
 _REAL_SHADOW_MICRO_LAST_LOG_TS = 0.0
 REAL_MICRO_STRONG_GATE_FALLBACK_ENABLE = True
 REAL_MICRO_STRONG_GATE_MIN_PROB = 0.64
+IA_PROB_POLARIZE_ENABLE = True
+IA_PROB_POLARIZE_FACTOR_RELIABLE = 1.25
+IA_PROB_POLARIZE_FACTOR_UNRELIABLE = 2.05
+IA_PROB_POLARIZE_CENTER = 0.50
 
 
 def _validar_pattern_v1_config() -> None:
@@ -4420,8 +4425,10 @@ def _estado_guardrail_ia_fuerte(force: bool = False, ttl_s: float = 20.0) -> dic
         meta = _ORACLE_CACHE.get("meta") or leer_model_meta() or {}
         auc = float(meta.get("auc", 0.0) or 0.0)
         reliable = bool(meta.get("reliable", False))
+        n_samples_meta = int(meta.get("n_samples", meta.get("n", 0)) or 0)
         feats = meta.get("feature_names", [])
         feat_count = len(feats) if isinstance(feats, list) else 0
+        model_ready_for_auc = bool((n_samples_meta >= int(max(1, MIN_FIT_ROWS_LOW))) and (auc > 0.0))
 
         rep_all = auditar_calibracion_seniales_reales(min_prob=float(IA_CALIB_THRESHOLD)) or {}
         closed = int(rep_all.get("n_total_closed", rep_all.get("n", 0)) or 0)
@@ -4440,7 +4447,7 @@ def _estado_guardrail_ia_fuerte(force: bool = False, ttl_s: float = 20.0) -> dic
         reasons = []
         if closed < int(IA_HARD_GUARD_RED_MIN_CLOSED):
             reasons.append(f"HG:CLOSED<{int(IA_HARD_GUARD_RED_MIN_CLOSED)}")
-        if auc < float(IA_HARD_GUARD_RED_MIN_AUC):
+        if (not bool(IA_HARD_GUARD_RED_REQUIRE_MODEL_READY) or model_ready_for_auc) and (auc < float(IA_HARD_GUARD_RED_MIN_AUC)):
             reasons.append(f"HG:AUC<{float(IA_HARD_GUARD_RED_MIN_AUC):.2f}")
         if not reliable:
             reasons.append("HG:REL=false")
@@ -4455,7 +4462,7 @@ def _estado_guardrail_ia_fuerte(force: bool = False, ttl_s: float = 20.0) -> dic
 
         red_cond = bool(
             (closed < int(IA_HARD_GUARD_RED_MIN_CLOSED))
-            or (auc < float(IA_HARD_GUARD_RED_MIN_AUC))
+            or (((not bool(IA_HARD_GUARD_RED_REQUIRE_MODEL_READY)) or model_ready_for_auc) and (auc < float(IA_HARD_GUARD_RED_MIN_AUC)))
             or (feat_count > 0 and feat_count < int(IA_HARD_GUARD_MIN_FEATURES_RED))
             or severe_gap
         )
@@ -5866,6 +5873,21 @@ def _predict_prob_low_data_from_row(row: dict) -> float:
     return float(max(0.20, min(0.80, score)))
 
 
+def _polarizar_prob_simetrica(prob: float, reliable: bool = False) -> float:
+    """Amplía contraste entre verdes/rojos de forma simétrica alrededor de 50%."""
+    try:
+        p = float(max(0.0, min(1.0, float(prob))))
+        if not bool(IA_PROB_POLARIZE_ENABLE):
+            return p
+        c = float(max(0.35, min(0.65, float(IA_PROB_POLARIZE_CENTER))))
+        f = float(IA_PROB_POLARIZE_FACTOR_RELIABLE if reliable else IA_PROB_POLARIZE_FACTOR_UNRELIABLE)
+        f = float(max(1.0, min(2.5, f)))
+        out = c + ((p - c) * f)
+        return float(max(0.02, min(0.98, out)))
+    except Exception:
+        return float(max(0.0, min(1.0, float(prob))))
+
+
 def predecir_prob_ia_bot(bot: str) -> tuple[float | None, str | None]:
     """
     Retorna (prob, err). prob en 0..1.
@@ -6085,6 +6107,12 @@ def actualizar_prob_ia_bot(bot: str):
             p = _ajustar_prob_operativa(float(p))
             p = _ajustar_prob_por_evidencia_bot(bot, float(p))
             p = _ajustar_prob_por_racha_reciente(bot, float(p))
+            try:
+                meta_local_pol = _ORACLE_CACHE.get("meta") or leer_model_meta() or {}
+                reliable_pol = bool(meta_local_pol.get("reliable", False))
+            except Exception:
+                reliable_pol = False
+            p = _polarizar_prob_simetrica(float(p), reliable=reliable_pol)
             try:
                 estado_bots[bot]["ia_prob_pre_cap"] = float(max(0.0, min(1.0, float(p))))
             except Exception:
