@@ -76,3 +76,177 @@ Para tener una `Prob IA` más real y acertada:
 4. Recién cuando haya muestra madura, abre la compuerta adaptativa completa para REAL.
 
 En resumen: sí, se puede mejorar bastante la “realidad” de la probabilidad IA, y el camino correcto es **más disciplina de calibración y validación continua** que “más complejidad de modelo”.
+
+---
+
+## Diagnóstico quirúrgico del HUD y lógica estable (sin tocar código aún)
+
+### Secuencia más probable observada
+
+Con la evidencia descrita (token REAL→DEMO, variación de saldo real y cambios en W/L del bot líder), la lectura más consistente es:
+
+1. **Sí hubo entrada REAL previa** en `full50` (o bot campeón vigente en ese instante).
+2. **C1 se cerró en pérdida** (saldo real cae y aumenta `PÉRDIDAS` del bot).
+3. El sistema marcó **"Próx C2"**, pero **no ejecutó nueva entrada** por bloqueo de elegibilidad/repetición + compuertas de confiabilidad (`reliable=false`, warmup, hard-guard).
+4. El HUD mostró simultáneamente mensajes de **señal disponible** y **NO-GO para nuevas entradas**, lo cual es posible si cada panel está leyendo estados de distinta etapa del ciclo.
+
+No es necesariamente “entrada fantasma”; parece más bien **estado arrastrado + paneles desfasados**.
+
+### Las 4 piezas críticas (quién manda realmente)
+
+#### 1) Autorizador de entrada (Entry Authority)
+Debe ser una sola decisión atómica por tick:
+
+- `entry_authorized = TRUE` únicamente si pasan TODAS las compuertas de nueva entrada:
+  - techo/floor,
+  - confirmaciones,
+  - trigger,
+  - reliable/canary,
+  - lock de repetición,
+  - token libre.
+
+Si no, `entry_authorized = FALSE` sin ambigüedad.
+
+#### 2) Bloqueador (Block Authority)
+No debe “competir” con el autorizador: debe tener precedencia clara.
+
+- Si cualquier bloqueo duro está activo (`reliable=false`, `closed<min`, `anti-repeat`, `token ocupado`, `hard-guard`), se genera:
+  - `block_reason_primary` (única causa principal),
+  - `block_reason_secondary[]` (causas adicionales),
+  - y se fuerza `entry_authorized=FALSE`.
+
+#### 3) Liberador de token (Token Authority)
+Separar explícitamente:
+
+- **Estado de posición actual** (`position_state`: NONE/OPEN/CYCLE_WAIT/CLOSED)
+- **Permiso de nueva entrada** (`entry_authorized`)
+
+Regla de oro:
+
+- Puedes tener `position_state=OPEN` y a la vez `entry_authorized=FALSE` para nuevas entradas.
+- HUD debe decirlo así, en una sola frase de verdad operacional.
+
+#### 4) Panel informativo (HUD Authority)
+El HUD no debe recomputar lógica por su cuenta; solo debe pintar un **snapshot único**.
+
+- Introducir concepto de `decision_epoch_id` por tick.
+- Cada bloque visual imprime ese mismo `epoch_id`.
+- Si un panel muestra otro `epoch_id`, marcar “stale panel”.
+
+Así se elimina la sensación de “semáforo con dos cerebros”.
+
+## Lógica estable e inteligente recomendada (prioriza precisión alta real)
+
+### A. Contrato único de decisión por tick
+Publicar un objeto canónico (mentalmente, sin implementar aún):
+
+- `epoch_id`
+- `candidate_bot`
+- `p_raw`, `p_cal`, `p_oper`
+- `roof`, `floor`, `confirm_state`, `trigger_state`
+- `reliable_state`, `warmup_state`, `canary_state`
+- `anti_repeat_state`
+- `token_state`
+- `entry_authorized`
+- `block_reason_primary`
+- `position_state`
+
+Todo el HUD y los eventos deben salir de ese contrato.
+
+### B. Política de probabilidad alta con anti-sobreconfianza
+Si quieres que “predomine >90%” sin autoengaño:
+
+1. Mantener **doble umbral**:
+   - Umbral de observación (ej. ≥60%) para ranking/contexto.
+   - Umbral REAL (dinámico) para ejecución.
+2. Si `p_oper >= 90%` pero `reliable=false` o `warmup=true`, tratarlo como **alta convicción no operable** (label: `HI_CONF_BLOCKED`).
+3. Activar **penalización por calibración**:
+   - si bucket 90–100 tiene gap alto reciente, bajar temporalmente `p_oper` o subir `roof_dynamic`.
+
+Resultado: mantienes sensibilidad a señales fuertes, pero no abres REAL con probabilidad inflada.
+
+### C. Reglas limpias para Martingala C2..C6
+Para evitar el caso “Próx C2” + “se omite por repetición” confuso:
+
+- Distinguir dos modos:
+  1. **Cycle-locked**: C2..C6 pertenece al mismo bot/idea (permite repetición controlada).
+  2. **Fresh-entry**: nueva entrada exige bot distinto (anti-repeat estricto).
+- El bloqueo anti-repeat no debe aplicarse igual a ambos modos.
+- Mostrar en HUD: `cycle_mode=LOCKED|FRESH`.
+
+### D. Jerarquía de estados legible por humano
+Orden de precedencia recomendado en texto HUD:
+
+1. `POSITION` (qué está activo ahora)
+2. `ENTRY_PERMISSION` (si puede abrir algo nuevo)
+3. `PRIMARY_BLOCK`
+4. `NEXT_ACTION` (ej. “esperar C2”, “sin bot elegible”, “token libre”)
+
+Esto evita contradicciones tipo “SEÑAL LISTA + NO-GO” sin contexto.
+
+### E. Métrica de estabilidad operativa (nueva)
+Además de AUC/ECE, seguir esta métrica:
+
+- **Consistency Rate HUD** = `% ticks donde todos los paneles comparten el mismo epoch y misma decisión principal`.
+
+Meta mínima: >99%.
+Si baja, no escalar exposición REAL aunque la probabilidad suba.
+
+## Diagnóstico final accionable
+
+- Tu hipótesis principal es correcta: el sistema parece mezclar **estado de ciclo activo** con **autorización de nueva entrada** en la visualización.
+- La mejora clave no es “subir techo sí/no” aislado, sino **unificar autoridad de decisión + sincronía de HUD + reglas separadas para C2/C6 vs entrada fresca**.
+- Solo después de esa limpieza conviene afinar el `roof_dynamic`; de lo contrario, cualquier ajuste de umbral se vuelve difícil de interpretar y fácil de sobreajustar.
+
+## Respuesta directa: ¿los candados están muy duros para invertir más seguido?
+
+### Diagnóstico corto
+
+**Sí, hoy están duros para frecuencia** (especialmente en warmup), pero **no necesariamente están “mal” para riesgo**.
+
+Por lo observado en HUD:
+
+- `reliable=false` + `warmup` está actuando como bloqueo dominante.
+- `ROOF` relativamente alto en modo operativo (77–78%) filtra muchas señales aunque el candidato salga “alto” en un tick.
+- Anti-repetición está frenando continuidad en C2 cuando la lógica de ciclo no está separada de entrada fresca.
+
+Resultado práctico: el sistema favorece **pocas entradas** y evita sobreoperar, pero también puede perder continuidad útil cuando aparece un candidato fuerte repetido.
+
+### Regla de equilibrio (frecuencia vs calidad)
+
+No conviene “abrir todo” ni dejarlo tan rígido. La forma estable es usar un **perfil por fase**:
+
+1. **Warmup / confiabilidad baja**
+   - Mantener candados duros para REAL.
+   - Permitir más observación/DEMO para recolectar evidencia.
+2. **Transición (muestra intermedia)**
+   - Aflojar 1 nivel el techo dinámico solo si mejora la calibración por buckets.
+   - Mantener guardia anti-sobreconfianza en 90–100.
+3. **Maduro (reliable=true sostenido)**
+   - Permitir más frecuencia REAL con compuerta adaptativa y control por bot.
+
+### Cómo saber si aflojar candados sin romper el sistema
+
+Aflojar solo si se cumplen **dos condiciones a la vez**:
+
+- Calibración aceptable (gap en bucket 90–100 controlado).
+- Drawdown estable por ciclo (sin deterioro en 2 checkpoints seguidos).
+
+Si una de las dos falla, se vuelve al perfil anterior.
+
+### Propuesta concreta para “más seguidas” sin desorden
+
+1. Mantener `ROOF` actual para entrada fresca, pero crear tratamiento distinto para continuidad:
+   - **Fresh-entry**: candado actual (más estricto).
+   - **Cycle-locked C2..C6**: candado específico de ciclo (menos penalizado por anti-repeat).
+2. Cuando `p_oper >= 90%` y la señal está bloqueada por warmup/reliable, marcar explícitamente `HI_CONF_BLOCKED` (alta convicción, no operable aún).
+3. Ajustar por pasos pequeños y medibles (no saltos grandes):
+   - Cambios graduales del techo/floor.
+   - Evaluación cada +20 cierres.
+   - Rollback automático si cae precisión o sube drawdown.
+
+### Conclusión práctica
+
+- **Sí**, para el objetivo de “más inversiones seguidas”, los candados actuales están del lado conservador.
+- **Pero** no deben relajarse de golpe: primero separar continuidad de ciclo vs entrada fresca y gobernar por calibración + drawdown.
+- La meta correcta no es solo “entrar más”, sino **entrar más cuando la probabilidad alta sea confiable de verdad**.
