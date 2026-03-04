@@ -10,7 +10,7 @@
 
 - Umbrales y controles anti-sobreconfianza definidos en configuración global (`IA_SHRINK_ALPHA`, límites de warmup y caps).  
 - Wrapper explícito de calibración de probabilidad (`ModeloXGBCalibrado`) con opciones `sigmoid` e `isotonic`.  
-- Umbral REAL adaptativo implementado, pero anulado por `REAL_CLASSIC_GATE=True` (fuerza 85% fijo).  
+- Umbral REAL adaptativo implementado con `REAL_CLASSIC_GATE=True`, pero en esta versión **no equivale a 85% fijo**: los pisos base están en torno a 60% (`IA_ACTIVACION_REAL_THR`) y el objetivo dinámico en 70% (`AUTO_REAL_THR`).  
 - Reporte integral con n muy bajo de señales cerradas y brecha alta en bucket 90–100%.
 
 ## ¿Necesitamos que la Prob IA sea más real y acertada?
@@ -55,7 +55,7 @@ Esa alineación se logra con calibración + suficiente muestra + reglas de activ
 
 ### Fase 4 (operativa REAL más inteligente)
 
-1. Cuando haya muestra madura, desactivar `REAL_CLASSIC_GATE` en ventanas controladas para permitir umbral adaptativo real.
+1. Cuando haya muestra madura, evaluar en ventanas controladas si conviene seguir con `REAL_CLASSIC_GATE` o migrar a compuerta plenamente adaptativa (sin asumir que hoy esté “fijo en 85%”).
 2. Migrar de gate fijo por probabilidad a gate mixto:
    - `score_final = w1*prob_calibrada + w2*salud_bot + w3*régimen`.
 3. Definir criterio de rollback: si cae precisión objetivo por debajo de piso (`IA_TARGET_PRECISION_FLOOR`) en dos checkpoints consecutivos, volver a modo conservador.
@@ -250,3 +250,80 @@ Si una de las dos falla, se vuelve al perfil anterior.
 - **Sí**, para el objetivo de “más inversiones seguidas”, los candados actuales están del lado conservador.
 - **Pero** no deben relajarse de golpe: primero separar continuidad de ciclo vs entrada fresca y gobernar por calibración + drawdown.
 - La meta correcta no es solo “entrar más”, sino **entrar más cuando la probabilidad alta sea confiable de verdad**.
+
+---
+
+## Correcciones clave tras revisión de evidencia del repo
+
+### 1) El cuello principal no es un "85% pétreo"
+
+Con los parámetros actuales del script principal, el sistema opera con:
+
+- `IA_ACTIVACION_REAL_THR = 0.60`
+- `AUTO_REAL_THR = 0.70`
+- `REAL_CLASSIC_GATE = True`
+
+Por tanto, el freno dominante observado para nuevas entradas no parece ser un 85% fijo, sino la combinación de:
+
+- `reliable=false`,
+- warmup,
+- hard-guard,
+- y bloqueos de elegibilidad/rotación.
+
+### 2) Riesgo estructural: frescura del modelo vs dataset incremental
+
+Antes de afinar techo/floor, hay que auditar la coherencia de entrenamiento:
+
+- `dataset_incremental.csv` tiene más filas que las usadas por el modelo activo.
+- `model_meta.json` declara `rows_total`/`n_samples` bastante menores que el incremental actual.
+
+Esto obliga a validar si:
+
+1. El campeón se reentrena realmente con el incremental vigente.
+2. Hay filtros que recortan en exceso antes del fit.
+3. El pipeline está promoviendo un modelo con ventana desactualizada.
+
+Sin esa verificación, cualquier tuning de candados puede ser maquillaje sobre un modelo parcial.
+
+### 3) Sobreconfianza: hipótesis plausible, evidencia local limitada
+
+La hipótesis de sobreconfianza en 90–100% es razonable, pero en este repositorio debe tratarse como **hipótesis operativa** hasta consolidar evidencia de cierres por bucket en logs/reporte activo (por ejemplo, cuando `ia_signals_log.csv` tenga cierres útiles y no solo cabecera).
+
+Sí hay evidencia suficiente de prudencia porque el meta actual muestra:
+
+- `reliable=false`,
+- AUC/Brier moderados,
+- precisión por umbral útil pero aún no robusta para confiar ciegamente en probabilidades extremas.
+
+### 4) Nudo real de frecuencia: C2..C6 tratados como rotación estricta
+
+La lógica actual de martingala para `C2..C6` excluye:
+
+- bots ya usados en la corrida,
+- y además `ultimo_bot_real`.
+
+Si no quedan bots nuevos, retorna `None` y omite entrada.
+
+Esto explica de forma directa los casos de:
+
+- “Próx C2”
+- junto con “sin bot nuevo elegible / se omite para evitar repetición”.
+
+## Reorden del plan maestro (prioridad recomendada)
+
+### Fase 0 — Frescura del campeón
+
+Primero verificar por qué el modelo operativo usa menos muestra que el incremental disponible y corregir eso (si aplica).
+
+### Fase 1 — Separar "entrada fresca" de "continuidad de ciclo"
+
+- **Fresh-entry**: mantener anti-repeat estricto y candados completos.
+- **Cycle-continuation (C2..C6)**: permitir continuidad del mismo bot bajo seguridad dura (saldo/hard-guard/invalidación severa), sin tratarla como entrada nueva normal.
+
+### Fase 2 — Contrato único por tick y HUD sincronizado
+
+Consolidar una sola verdad operativa por `epoch_id` para que todos los paneles muestren el mismo estado y bloqueo principal.
+
+### Fase 3 — Calibración y tuning fino
+
+Recién después: ajuste de `roof_dynamic`, selección de calibrador por ECE/Brier y política de probabilidades altas con control de sobreconfianza.
