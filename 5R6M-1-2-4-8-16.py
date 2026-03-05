@@ -715,12 +715,33 @@ marti_ciclos_perdidos = 0
 
 # Anti-repetición de bot en REAL:
 # - Si el HUD está en C1, se puede repetir bot.
-# - Si el HUD está en C2..C{MAX_CICLOS}, se evita reusar el último bot REAL.
+# - Si el HUD está en C2..C{MAX_CICLOS}, se prioriza no repetir; puede haber fallback controlado.
 ultimo_bot_real = None
 
-# Rotación estricta por corrida de martingala REAL (C1..C5)
+# Rotación por corrida de martingala REAL (C1..C5)
 # Guarda el orden de bots usados en la corrida activa para evitar repeticiones.
 bots_usados_en_esta_marti = []
+# Continuidad inteligente C2..C6: si no hay bot nuevo elegible, permitir repetir
+# el mejor candidato SOLO bajo umbral mínimo de probabilidad operativa.
+MARTI_CYCLE_ALLOW_REPEAT_FALLBACK = True
+MARTI_CYCLE_REPEAT_MIN_PROB = 0.68
+MARTI_CYCLE_REPEAT_MIN_PROB_UNRELIABLE_CAP = 0.66
+
+
+def _marti_repeat_min_prob_live(meta_live=None):
+    """Umbral vivo para fallback C2..C6, con ajuste conservador en modo no confiable."""
+    base = float(MARTI_CYCLE_REPEAT_MIN_PROB)
+    try:
+        if not isinstance(meta_live, dict):
+            meta_live = resolver_canary_estado(leer_model_meta() or {})
+        n_samples = int(meta_live.get("n_samples", meta_live.get("n", 0)) or 0)
+        warmup = bool(meta_live.get("warmup_mode", n_samples < int(TRAIN_WARMUP_MIN_ROWS)))
+        reliable = bool(meta_live.get("reliable", False)) and (not warmup)
+        if not reliable:
+            base = min(base, float(MARTI_CYCLE_REPEAT_MIN_PROB_UNRELIABLE_CAP))
+    except Exception:
+        pass
+    return float(max(0.0, min(1.0, base)))
 
 # Auditoría de secuencia martingala (C1..C{MAX_CICLOS}) para traza explícita.
 marti_audit_run_id = 1
@@ -781,9 +802,10 @@ MIN_CALIB_ROWS = 80
 # Feature set CORE (13) — estable y sin mutaciones
 # ============================================================
 FEATURE_NAMES_CORE_13 = [
-    "rsi_9","rsi_14","sma_5","sma_spread","cruce_sma","breakout",
-    "rsi_reversion","racha_actual","payout","puntaje_estrategia",
-    "volatilidad","es_rebote","hora_bucket",
+    # CORE13_v2 (scalping 1-min): mantener aportantes + reemplazo de no-aportantes.
+    "racha_actual", "puntaje_estrategia", "payout",
+    "ret_1m", "ret_3m", "ret_5m", "slope_5m", "rv_20",
+    "range_norm", "bb_z", "body_ratio", "wick_imbalance", "micro_trend_persist",
 ]
 
 # Por defecto entrenamos SOLO con las 13 core (modo estable)
@@ -1271,9 +1293,9 @@ try:
     INCREMENTAL_FEATURES_V2 = list(FEATURE_NAMES_CORE_13)
 except Exception:
     INCREMENTAL_FEATURES_V2 = [
-        "rsi_9","rsi_14","sma_5","sma_spread","cruce_sma","breakout",
-        "rsi_reversion","racha_actual","payout","puntaje_estrategia",
-        "volatilidad","es_rebote","hora_bucket",
+        "racha_actual", "puntaje_estrategia", "payout",
+        "ret_1m", "ret_3m", "ret_5m", "slope_5m", "rv_20",
+        "range_norm", "bb_z", "body_ratio", "wick_imbalance", "micro_trend_persist",
     ]
 # === LOCK ESTRICTO (solo para escrituras sensibles como incremental.csv) ===
 @contextmanager
@@ -1703,6 +1725,9 @@ def _anexar_incremental_desde_bot_CANON(bot: str, fila_dict_or_full: dict, label
 
         if not isinstance(fila_dict_or_full, dict) or not fila_dict_or_full:
             return False
+
+        # Normalizar/enriquecer fila para contrato CORE13_v2 (con fallback legacy).
+        fila_dict_or_full = _enriquecer_scalping_features_row(fila_dict_or_full)
 
         # Label: aceptar parámetro o leer del dict
         if label is None:
@@ -2750,6 +2775,17 @@ def clip_feature_values(fila_dict, feature_names):
         "volatilidad": (0, 1),
         "es_rebote": (0, 1),
         "hora_bucket": (0, 1),
+        # CORE13_v2 scalping
+        "ret_1m": (-1, 1),
+        "ret_3m": (-1, 1),
+        "ret_5m": (-1, 1),
+        "slope_5m": (-1, 1),
+        "rv_20": (0, 1),
+        "range_norm": (0, 1),
+        "bb_z": (-3, 3),
+        "body_ratio": (0, 1),
+        "wick_imbalance": (-1, 1),
+        "micro_trend_persist": (-1, 1),
         # sma_5 / sma_20: no clip, pero sí normalizar a float cuando se pueda
     }
     clipped = dict(fila_dict)
@@ -2779,6 +2815,52 @@ def clip_feature_values(fila_dict, feature_names):
 
     return clipped
     
+def _enriquecer_scalping_features_row(fila_dict: dict) -> dict:
+    """Completa CORE13_v2 scalping desde campos legacy cuando falten."""
+    out = dict(fila_dict or {})
+
+    def _f(name, default=0.0):
+        try:
+            v = float(out.get(name, default) if out.get(name, default) not in (None, "") else default)
+            return v if math.isfinite(v) else float(default)
+        except Exception:
+            return float(default)
+
+    # Legacy proxies (si no vienen directos de bot):
+    rsi9 = _f("rsi_9", 50.0)
+    rsi14 = _f("rsi_14", 50.0)
+    sma_spread = _f("sma_spread", 0.0)
+    cruce_sma = _f("cruce_sma", 0.0)
+    breakout = _f("breakout", 0.0)
+    rsi_rev = _f("rsi_reversion", 0.0)
+    vol = _f("volatilidad", 0.0)
+    reb = _f("es_rebote", 0.0)
+    racha = _f("racha_actual", 0.0)
+
+    if "ret_1m" not in out:
+        out["ret_1m"] = float(np.clip((rsi9 - 50.0) / 50.0, -1.0, 1.0))
+    if "ret_3m" not in out:
+        out["ret_3m"] = float(np.clip((rsi14 - 50.0) / 50.0, -1.0, 1.0))
+    if "ret_5m" not in out:
+        out["ret_5m"] = float(np.clip(0.6 * float(out.get("ret_3m", 0.0)) + 0.4 * float(out.get("ret_1m", 0.0)), -1.0, 1.0))
+    if "slope_5m" not in out:
+        out["slope_5m"] = float(np.clip(sma_spread + 0.05 * cruce_sma, -1.0, 1.0))
+    if "rv_20" not in out:
+        out["rv_20"] = float(np.clip(vol, 0.0, 1.0))
+    if "range_norm" not in out:
+        out["range_norm"] = float(np.clip(breakout, 0.0, 1.0))
+    if "bb_z" not in out:
+        out["bb_z"] = float(np.clip((2.0 * rsi_rev) - 1.0, -3.0, 3.0))
+    if "body_ratio" not in out:
+        out["body_ratio"] = float(np.clip(abs(float(out.get("ret_1m", 0.0))), 0.0, 1.0))
+    if "wick_imbalance" not in out:
+        out["wick_imbalance"] = float(np.clip((2.0 * reb) - 1.0, -1.0, 1.0))
+    if "micro_trend_persist" not in out:
+        out["micro_trend_persist"] = float(np.clip(racha / 10.0, -1.0, 1.0))
+
+    return out
+
+
 def calcular_volatilidad_simple(row_dict: dict) -> float:
     """
     Proxy de volatilidad 0–1 menos saturante que el clip lineal.
@@ -7286,13 +7368,23 @@ def reset_martingala_por_saldo(ciclo_objetivo: int, saldo_actual: float | None) 
         f"🧯 Saldo insuficiente para C{ciclo} ({monto_necesario:.2f} USD): {falta_msg}. Reinicio automático a C1."
     )
     return True
-def elegir_candidato_rotacion_marti(candidatos: list, ciclo_objetivo: int):
+def elegir_candidato_rotacion_marti(
+    candidatos: list,
+    ciclo_objetivo: int,
+    allow_repeat_fallback: bool = False,
+    repeat_min_prob: float = 0.70,
+):
     """
-    Rotación estricta para REAL en C2..C{MAX_CICLOS}:
-    - Excluye bots ya usados en la corrida activa (bots_usados_en_esta_marti).
-    - Excluye además el último bot REAL operado para impedir repetición seguida
-      aunque haya desincronización temporal del tracking de usados.
-    - Si no hay elegibles nuevos, retorna None (NO repetir bot en la misma martingala).
+    Rotación para REAL en C2..C{MAX_CICLOS}:
+    - Prioriza bots no usados en la corrida activa.
+    - Excluye además el último bot REAL operado para impedir repetición inmediata.
+    - Si no hay bot nuevo elegible:
+      * retorna None por defecto (modo estricto), o
+      * permite repetir SOLO si `allow_repeat_fallback=True` y la probabilidad
+        operativa del candidato cumple `repeat_min_prob`.
+
+    El fallback protege continuidad de ciclo C2..C6 sin abrir la compuerta a
+    repeticiones indiscriminadas.
     """
     try:
         ciclo = int(ciclo_objetivo)
@@ -7306,11 +7398,33 @@ def elegir_candidato_rotacion_marti(candidatos: list, ciclo_objetivo: int):
     usados_set = set(usados)
     if ultimo_bot_real in BOT_NAMES:
         usados_set.add(str(ultimo_bot_real))
+
     candidatos_nuevos = [c for c in candidatos if c[1] not in usados_set]
     if candidatos_nuevos:
         return candidatos_nuevos[0]
 
-    # Regla de seguridad solicitada: nunca repetir bot en C2..C{MAX_CICLOS}.
+    if bool(allow_repeat_fallback):
+        try:
+            min_prob = float(repeat_min_prob)
+        except Exception:
+            min_prob = 0.70
+        # Blindaje defensivo: mantener umbral dentro de rango probabilístico.
+        min_prob = max(0.0, min(1.0, min_prob))
+        for c in candidatos:
+            # Tupla esperada: (score, bot, p_model, p_oper, ...)
+            if not isinstance(c, (tuple, list)):
+                continue
+            if len(c) <= 2:
+                continue
+            p_oper = c[3] if len(c) > 3 else c[2]
+            try:
+                p_val = float(p_oper)
+                p_ok = (p_val == p_val) and (p_val >= min_prob)  # NaN-safe
+            except Exception:
+                p_ok = False
+            if p_ok:
+                return c
+
     return None
 
 # === FIN BLOQUE 9 ===
@@ -7594,6 +7708,28 @@ def _enriquecer_df_con_derivadas(df: pd.DataFrame, feats: list[str]) -> pd.DataF
             sma20 = _col_num("sma_20", 0.0)
             base = sma20.abs().clip(lower=1e-9)
             out["sma_spread"] = ((sma5 - sma20).abs() / base).clip(lower=0.0, upper=5.0)
+
+        # CORE13_v2 scalping (backfill desde columnas legacy si existen)
+        if "ret_1m" in feats:
+            out["ret_1m"] = ((_col_num("rsi_9", 50.0) - 50.0) / 50.0).clip(lower=-1.0, upper=1.0)
+        if "ret_3m" in feats:
+            out["ret_3m"] = ((_col_num("rsi_14", 50.0) - 50.0) / 50.0).clip(lower=-1.0, upper=1.0)
+        if "ret_5m" in feats:
+            out["ret_5m"] = (0.6 * _col_num("ret_3m", 0.0) + 0.4 * _col_num("ret_1m", 0.0)).clip(lower=-1.0, upper=1.0)
+        if "slope_5m" in feats:
+            out["slope_5m"] = (_col_num("sma_spread", 0.0) + 0.05 * _col_num("cruce_sma", 0.0)).clip(lower=-1.0, upper=1.0)
+        if "rv_20" in feats:
+            out["rv_20"] = _col_num("volatilidad", 0.0).clip(lower=0.0, upper=1.0)
+        if "range_norm" in feats:
+            out["range_norm"] = _col_num("breakout", 0.0).clip(lower=0.0, upper=1.0)
+        if "bb_z" in feats:
+            out["bb_z"] = ((2.0 * _col_num("rsi_reversion", 0.0)) - 1.0).clip(lower=-3.0, upper=3.0)
+        if "body_ratio" in feats:
+            out["body_ratio"] = _col_num("ret_1m", 0.0).abs().clip(lower=0.0, upper=1.0)
+        if "wick_imbalance" in feats:
+            out["wick_imbalance"] = ((2.0 * _col_num("es_rebote", 0.0)) - 1.0).clip(lower=-1.0, upper=1.0)
+        if "micro_trend_persist" in feats:
+            out["micro_trend_persist"] = (_col_num("racha_actual", 0.0) / 10.0).clip(lower=-1.0, upper=1.0)
 
         return out
     except Exception:
@@ -8123,6 +8259,9 @@ def oraculo_predict(fila_dict, modelo, scaler, meta, bot_name=""):
             fila_dict["hora_bucket"] = 0.0
             fila_dict["hora_missing"] = 1.0
 
+        # Enriquecer features CORE13_v2 si faltan (compat con filas legacy).
+        fila_dict = _enriquecer_scalping_features_row(fila_dict)
+
         # Armar X en orden del modelo
         X = []
         for col in feature_names:
@@ -8598,6 +8737,7 @@ def anexar_incremental_desde_bot(bot: str):
         # Construir row completo + features derivadas (volatilidad/hora_bucket)
         row_dict_full = dict(fila_dict)
         row_dict_full["result_bin"] = label
+        row_dict_full = _enriquecer_scalping_features_row(row_dict_full)
 
         # 1) Volatilidad: prioriza valor ya enriquecido; recalcula solo si falta/inválido.
         vol_calc = None
@@ -11499,9 +11639,21 @@ def evaluar_semaforo():
         falta = costo_c1 - saldo_val
         detalle = f"Saldo < C1 ({costo_c1:.2f}). Faltan {falta:.2f} USD para abrir nueva orden."
         return "🟡", "AVISO", detalle
+
+    # Alineación HUD vs compuerta REAL: no marcar SEÑAL LISTA si gate está en espera.
+    confirm_st = int(DYN_ROOF_STATE.get("confirm_streak", 0) or 0)
+    confirm_need = int(DYN_ROOF_STATE.get("last_confirm_need", DYN_ROOF_CONFIRM_TICKS) or DYN_ROOF_CONFIRM_TICKS)
+    trigger_ok = bool(DYN_ROOF_STATE.get("last_trigger_ok", False))
+    if confirm_st < confirm_need:
+        detalle = f"Compuerta en espera: confirm={confirm_st}/{confirm_need}."
+        return "🟡", "AVISO", detalle
+    if not trigger_ok:
+        detalle = "Compuerta en espera: trigger_ok=no."
+        return "🟡", "AVISO", detalle
+
     if saldo_val < costo:
         detalle = f"Saldo parcial: cubre C1 pero no todo C1..C{int(MAX_CICLOS)} ({costo:.2f})."
-        return "🟢", "SEÑAL LISTA", detalle
+        return "🟡", "AVISO", detalle
 
     n_inc = contar_filas_incremental()
     if n_inc < MIN_FIT_ROWS_LOW:
@@ -13637,11 +13789,24 @@ async def main():
                                 ciclo_auto = ciclo_martingala_siguiente()
                                 if reset_martingala_por_saldo(ciclo_auto, saldo_val):
                                     ciclo_auto = 1
-                                mejor = elegir_candidato_rotacion_marti(candidatos, ciclo_auto)
+                                repeat_min_prob_live = float(_marti_repeat_min_prob_live())
+                                mejor = elegir_candidato_rotacion_marti(
+                                    candidatos,
+                                    ciclo_auto,
+                                    allow_repeat_fallback=bool(MARTI_CYCLE_ALLOW_REPEAT_FALLBACK and int(ciclo_auto) > 1),
+                                    repeat_min_prob=repeat_min_prob_live,
+                                )
                                 if mejor is None and int(ciclo_auto) > 1:
-                                    agregar_evento(f"🧯 Rotación C{ciclo_auto}: sin bot nuevo elegible. No se repite bot en esta martingala.")
+                                    agregar_evento(f"🧯 Rotación C{ciclo_auto}: sin bot elegible (nuevo o fallback p>={repeat_min_prob_live*100:.0f}%).")
                                 if mejor is not None:
                                     score_top, mejor_bot, prob, p_post, reg_score, ev_n, ev_wr, ev_lb = mejor
+                                    if int(ciclo_auto) > 1 and bool(MARTI_CYCLE_ALLOW_REPEAT_FALLBACK):
+                                        _repeat_pick = (mejor_bot == ultimo_bot_real) or (mejor_bot in bots_usados_en_esta_marti)
+                                        if _repeat_pick:
+                                            agregar_evento(
+                                                f"♻️ Rotación C{ciclo_auto}: fallback controlado en {mejor_bot} "
+                                                f"(p_real={p_post*100:.1f}% >= {repeat_min_prob_live*100:.0f}%)."
+                                            )
                                     agregar_evento(f"🧠 Embudo IA: {mejor_bot} score={score_top*100:.1f}% | p_model={prob*100:.1f}% | p_real={p_post*100:.1f}% | reg={reg_score*100:.1f}% | WR={ev_wr*100:.1f}% LB={ev_lb*100:.1f}% (n={ev_n})")
                                     PENDIENTE_FORZAR_BOT = mejor_bot
                                     PENDIENTE_FORZAR_INICIO = ahora
@@ -13792,11 +13957,24 @@ async def main():
                             ciclo_auto = ciclo_martingala_siguiente()
                             if reset_martingala_por_saldo(ciclo_auto, saldo_val):
                                 ciclo_auto = 1
-                            mejor = elegir_candidato_rotacion_marti(candidatos, ciclo_auto)
+                            repeat_min_prob_live = float(_marti_repeat_min_prob_live(meta_live if isinstance(meta_live, dict) else None))
+                            mejor = elegir_candidato_rotacion_marti(
+                                    candidatos,
+                                    ciclo_auto,
+                                    allow_repeat_fallback=bool(MARTI_CYCLE_ALLOW_REPEAT_FALLBACK and int(ciclo_auto) > 1),
+                                    repeat_min_prob=repeat_min_prob_live,
+                                )
                             if mejor is None and int(ciclo_auto) > 1:
-                                agregar_evento(f"🧯 IA AUTO C{ciclo_auto}: sin bot nuevo elegible. Se omite entrada para evitar repetición.")
+                                agregar_evento(f"🧯 IA AUTO C{ciclo_auto}: sin bot elegible (nuevo o fallback p>={repeat_min_prob_live*100:.0f}%).")
                             if mejor is not None:
                                 score_top, mejor_bot, prob, p_post, reg_score, ev_n, ev_wr, ev_lb = mejor
+                                if int(ciclo_auto) > 1 and bool(MARTI_CYCLE_ALLOW_REPEAT_FALLBACK):
+                                    _repeat_pick = (mejor_bot == ultimo_bot_real) or (mejor_bot in bots_usados_en_esta_marti)
+                                    if _repeat_pick:
+                                        agregar_evento(
+                                            f"♻️ IA AUTO C{ciclo_auto}: fallback controlado en {mejor_bot} "
+                                            f"(p_real={p_post*100:.1f}% >= {repeat_min_prob_live*100:.0f}%)."
+                                        )
                                 agregar_evento(f"⚙️ IA AUTO: {mejor_bot} score={score_top*100:.1f}% | p_model={prob*100:.1f}% | p_real={p_post*100:.1f}% | reg={reg_score*100:.1f}% | WR={ev_wr*100:.1f}% LB={ev_lb*100:.1f}% (n={ev_n})")
                                 monto = MARTI_ESCALADO[max(0, min(len(MARTI_ESCALADO)-1, ciclo_auto - 1))]
                                 val = obtener_valor_saldo()
