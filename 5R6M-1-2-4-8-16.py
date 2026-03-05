@@ -725,6 +725,23 @@ bots_usados_en_esta_marti = []
 # el mejor candidato SOLO bajo umbral mínimo de probabilidad operativa.
 MARTI_CYCLE_ALLOW_REPEAT_FALLBACK = True
 MARTI_CYCLE_REPEAT_MIN_PROB = 0.68
+MARTI_CYCLE_REPEAT_MIN_PROB_UNRELIABLE_CAP = 0.66
+
+
+def _marti_repeat_min_prob_live(meta_live=None):
+    """Umbral vivo para fallback C2..C6, con ajuste conservador en modo no confiable."""
+    base = float(MARTI_CYCLE_REPEAT_MIN_PROB)
+    try:
+        if not isinstance(meta_live, dict):
+            meta_live = resolver_canary_estado(leer_model_meta() or {})
+        n_samples = int(meta_live.get("n_samples", meta_live.get("n", 0)) or 0)
+        warmup = bool(meta_live.get("warmup_mode", n_samples < int(TRAIN_WARMUP_MIN_ROWS)))
+        reliable = bool(meta_live.get("reliable", False)) and (not warmup)
+        if not reliable:
+            base = min(base, float(MARTI_CYCLE_REPEAT_MIN_PROB_UNRELIABLE_CAP))
+    except Exception:
+        pass
+    return float(max(0.0, min(1.0, base)))
 
 # Auditoría de secuencia martingala (C1..C{MAX_CICLOS}) para traza explícita.
 marti_audit_run_id = 1
@@ -13673,14 +13690,15 @@ async def main():
                                 ciclo_auto = ciclo_martingala_siguiente()
                                 if reset_martingala_por_saldo(ciclo_auto, saldo_val):
                                     ciclo_auto = 1
+                                repeat_min_prob_live = float(_marti_repeat_min_prob_live())
                                 mejor = elegir_candidato_rotacion_marti(
                                     candidatos,
                                     ciclo_auto,
                                     allow_repeat_fallback=bool(MARTI_CYCLE_ALLOW_REPEAT_FALLBACK and int(ciclo_auto) > 1),
-                                    repeat_min_prob=float(MARTI_CYCLE_REPEAT_MIN_PROB),
+                                    repeat_min_prob=repeat_min_prob_live,
                                 )
                                 if mejor is None and int(ciclo_auto) > 1:
-                                    agregar_evento(f"🧯 Rotación C{ciclo_auto}: sin bot elegible (nuevo o fallback p>={MARTI_CYCLE_REPEAT_MIN_PROB*100:.0f}%).")
+                                    agregar_evento(f"🧯 Rotación C{ciclo_auto}: sin bot elegible (nuevo o fallback p>={repeat_min_prob_live*100:.0f}%).")
                                 if mejor is not None:
                                     score_top, mejor_bot, prob, p_post, reg_score, ev_n, ev_wr, ev_lb = mejor
                                     if int(ciclo_auto) > 1 and bool(MARTI_CYCLE_ALLOW_REPEAT_FALLBACK):
@@ -13688,7 +13706,7 @@ async def main():
                                         if _repeat_pick:
                                             agregar_evento(
                                                 f"♻️ Rotación C{ciclo_auto}: fallback controlado en {mejor_bot} "
-                                                f"(p_real={p_post*100:.1f}% >= {MARTI_CYCLE_REPEAT_MIN_PROB*100:.0f}%)."
+                                                f"(p_real={p_post*100:.1f}% >= {repeat_min_prob_live*100:.0f}%)."
                                             )
                                     agregar_evento(f"🧠 Embudo IA: {mejor_bot} score={score_top*100:.1f}% | p_model={prob*100:.1f}% | p_real={p_post*100:.1f}% | reg={reg_score*100:.1f}% | WR={ev_wr*100:.1f}% LB={ev_lb*100:.1f}% (n={ev_n})")
                                     PENDIENTE_FORZAR_BOT = mejor_bot
@@ -13840,14 +13858,15 @@ async def main():
                             ciclo_auto = ciclo_martingala_siguiente()
                             if reset_martingala_por_saldo(ciclo_auto, saldo_val):
                                 ciclo_auto = 1
+                            repeat_min_prob_live = float(_marti_repeat_min_prob_live(meta_live if isinstance(meta_live, dict) else None))
                             mejor = elegir_candidato_rotacion_marti(
                                     candidatos,
                                     ciclo_auto,
                                     allow_repeat_fallback=bool(MARTI_CYCLE_ALLOW_REPEAT_FALLBACK and int(ciclo_auto) > 1),
-                                    repeat_min_prob=float(MARTI_CYCLE_REPEAT_MIN_PROB),
+                                    repeat_min_prob=repeat_min_prob_live,
                                 )
                             if mejor is None and int(ciclo_auto) > 1:
-                                agregar_evento(f"🧯 IA AUTO C{ciclo_auto}: sin bot elegible (nuevo o fallback p>={MARTI_CYCLE_REPEAT_MIN_PROB*100:.0f}%).")
+                                agregar_evento(f"🧯 IA AUTO C{ciclo_auto}: sin bot elegible (nuevo o fallback p>={repeat_min_prob_live*100:.0f}%).")
                             if mejor is not None:
                                 score_top, mejor_bot, prob, p_post, reg_score, ev_n, ev_wr, ev_lb = mejor
                                 if int(ciclo_auto) > 1 and bool(MARTI_CYCLE_ALLOW_REPEAT_FALLBACK):
@@ -13855,7 +13874,7 @@ async def main():
                                     if _repeat_pick:
                                         agregar_evento(
                                             f"♻️ IA AUTO C{ciclo_auto}: fallback controlado en {mejor_bot} "
-                                            f"(p_real={p_post*100:.1f}% >= {MARTI_CYCLE_REPEAT_MIN_PROB*100:.0f}%)."
+                                            f"(p_real={p_post*100:.1f}% >= {repeat_min_prob_live*100:.0f}%)."
                                         )
                                 agregar_evento(f"⚙️ IA AUTO: {mejor_bot} score={score_top*100:.1f}% | p_model={prob*100:.1f}% | p_real={p_post*100:.1f}% | reg={reg_score*100:.1f}% | WR={ev_wr*100:.1f}% LB={ev_lb*100:.1f}% (n={ev_n})")
                                 monto = MARTI_ESCALADO[max(0, min(len(MARTI_ESCALADO)-1, ciclo_auto - 1))]
