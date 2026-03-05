@@ -307,7 +307,7 @@ GATE_ACTIVO_MIN_MUESTRA = 40         # mínimo de cierres por activo para evalua
 GATE_ACTIVO_MIN_WR = 0.48            # si WR reciente por activo cae debajo, bloquear temporalmente
 GATE_ACTIVO_LOOKBACK = 180           # cierres recientes por bot para estimar régimen
 # Gate por segmentos (payout/vol/hora): prioriza zonas con señal estable de racha_actual
-GATE_SEGMENTO_ENABLED = True
+GATE_SEGMENTO_ENABLED = False  # transición v2: evitar dependencia legacy vol/hora hasta migrar gate
 GATE_SEGMENTO_MIN_MUESTRA = 35
 GATE_SEGMENTO_MIN_WR = 0.50
 GATE_SEGMENTO_LOOKBACK = 240
@@ -383,7 +383,7 @@ PATTERN_V1_BONUS_DUAL = 1.0
 PATTERN_V1_PENAL_TARDIA = 2.0
 PATTERN_V1_REQUIRE_CONFIRM_FULL = True   # confirm=2/2
 PATTERN_V1_REQUIRE_TRIGGER_OK = True     # trigger_ok=sí
-PATTERN_V1_USE_HYBRID_RANKING = True     # score_final = prob + bonus - penalizaciones
+PATTERN_V1_USE_HYBRID_RANKING = False    # transición v2: evitar sesgo legacy en ranking
 PATTERN_V1_LOG_COOLDOWN_S = 25.0
 PATTERN_V1_HYBRID_PTS_TO_PROB = 0.03  # 1 punto pattern = 3pp sobre score probabilístico
 PATTERN_V1_Q3_PROXY = {
@@ -7430,10 +7430,10 @@ def elegir_candidato_rotacion_marti(
 
 # === BLOQUE 10 — IA: DATASET, MODELO Y PREDICCIÓN ===
 # Caché y hot-reload de activos del oráculo
-_MODEL_PATH = "modelo_xgb.pkl"  # Actualizado para XGBoost
-_SCALER_PATH = "scaler.pkl"
-_FEATURES_PATH = "feature_names.pkl"
-_META_PATH = "model_meta.json"
+_MODEL_PATH = "modelo_xgb_v2.pkl"  # esquema v2
+_SCALER_PATH = "scaler_v2.pkl"
+_FEATURES_PATH = "feature_names_v2.pkl"
+_META_PATH = "model_meta_v2.json"
 
 _ORACLE_CACHE = {
     "model": None,
@@ -7462,6 +7462,8 @@ _ORACLE_CACHE = {
 # ============================
 
 LABEL_CANON = "result_bin"
+SCHEMA_VERSION_ACTIVE = "core13_v2_scalping"
+DATASET_SCHEMA_TAG = "dataset_incremental_v2"
 LABEL_CANDIDATES = (
     "result_bin", "y", "label", "target", "resultado_bin", "result",
     "resultado", "win", "outcome"
@@ -10094,6 +10096,8 @@ def maybe_retrain(force: bool = False):
             "test_n_at_thr": int(test_n_at_thr),
             "feature_names": list(feats_used),
             "label_col": str(label_col),
+            "schema_version": str(SCHEMA_VERSION_ACTIVE),
+            "trained_on_incremental": str(DATASET_SCHEMA_TAG),
             "feature_health": health_before,
             "dropped_features": [{"feature": k, "reason": r} for k, r in dropped_feats],
         }
@@ -11701,7 +11705,7 @@ def resetear_incremental_y_modelos(borrar_modelos: bool = True):
         print(f"⚠️ No pude borrar dataset_incremental.csv: {e}")
 
     if borrar_modelos:
-        for f in ("modelo_xgb.pkl","scaler.pkl","feature_names.pkl"):
+        for f in ("modelo_xgb.pkl","scaler.pkl","feature_names.pkl","model_meta.json","modelo_xgb_v2.pkl","scaler_v2.pkl","feature_names_v2.pkl","model_meta_v2.json"):
             try:
                 if os.path.exists(f):
                     os.remove(f)
@@ -11790,7 +11794,7 @@ def _asegurar_estructura_datos_inicio() -> list[str]:
 def backfill_incremental(ultimas=500):
     try:
         try:
-            feature_names = joblib.load("feature_names.pkl")
+            feature_names = joblib.load(globals().get("_FEATURES_PATH", "feature_names_v2.pkl"))
             feature_names = [c for c in feature_names if c != "result_bin"]
         except Exception:
             feature_names = list(INCREMENTAL_FEATURES_V2)

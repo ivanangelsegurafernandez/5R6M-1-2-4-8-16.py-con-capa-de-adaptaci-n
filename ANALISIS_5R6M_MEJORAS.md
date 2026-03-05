@@ -409,7 +409,7 @@ Sustituir las no usadas/menos útiles por 10 features micro-horizonte:
 
 ### 5.1) Estado actual vs propuesta (para evitar confusiones)
 
-- **Estado actual observado (meta vigente):** usar `feature_names` de `model_meta.json` como fuente de verdad.
+- **Estado actual observado (meta vigente):** usar `feature_names` del meta activo (`model_meta_v2.json` en canary v2, o el path configurado en `_META_PATH`) como fuente de verdad.
 - **CORE13_v2 aplicado:** contrato ya migrado en maestro; seguir validando desempeño vs campeón previo.
 - Cualquier PR de variables debe declarar explícitamente ambos bloques para no mezclar diagnóstico con intención de diseño.
 
@@ -453,3 +453,119 @@ Regla: **mantener lo que hoy aporta en el campeón** y reemplazar solo lo no usa
 13. `hora_bucket`       -> `micro_trend_persist`
 
 > Nota operativa: mapeo ya aplicado en maestro; mantener shadow/auditoría/canary para validar que v2 supere o iguale a v1.
+
+### 9) Cierre de frentes críticos post-migración v2
+
+Se aplicaron correcciones adicionales para evitar estado híbrido/silencioso:
+
+1. **Artefactos versionados v2 (runtime):**
+   - `_MODEL_PATH = modelo_xgb_v2.pkl`
+   - `_SCALER_PATH = scaler_v2.pkl`
+   - `_FEATURES_PATH = feature_names_v2.pkl`
+   - `_META_PATH = model_meta_v2.json`
+   - `model_meta` ahora guarda `schema_version` y `trained_on_incremental`.
+
+2. **Gates/pattern en transición v2:**
+   - `PATTERN_V1_USE_HYBRID_RANKING = False` (evita sesgo legacy en ranking del canary v2).
+   - `GATE_SEGMENTO_ENABLED = False` temporalmente (evita dependencia de segmentación legacy vol/hora hasta migración explícita del gate).
+
+3. **Repair incremental más seguro:**
+   - `reparar_dataset_incremental_mutante` prioriza conversión por **header/nombre** legacy→v2 con enriquecimiento, dejando rescate por posición como último recurso.
+
+4. **Satélites de selección/diagnóstico alineados:**
+   - `FEATURE_SET_PROD_WARMUP` y `FEATURE_SET_CORE_EXT` migrados a v2.
+   - `expected_pref` de diagnóstico actualizado a variables scalping v2.
+
+Con esto, el canary v2 queda más “puro”: menos mezcla de lógica legacy y menor riesgo de mapear columnas equivocadas en silencio.
+
+---
+
+## Matriz de impacto para canary CORE13_v2 (modo práctico)
+
+Objetivo: evitar un canary “Frankenstein” donde features v2, gates legacy y artefactos viejos se mezclan y falsean conclusiones.
+
+### ¿Qué es?
+
+Una matriz/checklist por módulo que documenta:
+
+1. **Inputs** (columnas, archivos, flags)
+2. **Outputs** (qué produce)
+3. **Dependencias cruzadas** (qué lo altera sin ser obvio)
+4. **Riesgos + síntomas** (cómo se ve cuando falla)
+5. **Control de canary** (qué encender/apagar según objetivo)
+
+### ¿Cuándo sí usarla?
+
+Usarla siempre que ocurra al menos una de estas:
+
+- cambio de contrato de features (como `CORE13_v2`),
+- backfill/compatibilidad legacy,
+- gates/pattern que usan columnas distintas al modelo,
+- riesgo de artefactos v1/v2 mezclados.
+
+### Modos de canary (definición clara)
+
+#### A) Canary “v2 puro”
+
+Se busca medir calidad de features v2 con mínima interferencia legacy:
+
+- artefactos v2 activos y aislados,
+- `PATTERN_V1_USE_HYBRID_RANKING=False`,
+- `GATE_SEGMENTO_ENABLED=False` temporal,
+- trazabilidad de filas `native` vs `backfill`.
+
+#### B) Canary “realista de producción”
+
+Se busca medir comportamiento del sistema completo:
+
+- mismo stack de gates/rules que prod,
+- artefactos v2 activos,
+- métricas de negocio + calibración.
+
+### Checklist por módulo (sin código)
+
+#### 1) Bots fuente
+
+- **Input esperado:** OHLC/series 1-min.
+- **Output esperado:** columnas v2 nativas (no solo proxies).
+- **Riesgo:** v2 depende de backfill indefinidamente.
+- **Síntoma:** señales “correctas” pero poco robustas fuera de muestra.
+
+#### 2) Incremental
+
+- **Input esperado:** filas con contrato v2 + `result_bin`.
+- **Output esperado:** dataset consistente para entreno.
+- **Riesgo:** rescue por posición mapea mal columnas.
+- **Síntoma:** entrena sin error, pero rendimiento errático/inexplicable.
+
+#### 3) Entrenamiento/artefactos
+
+- **Input esperado:** incremental alineado a v2.
+- **Output esperado:** `modelo_xgb_v2.pkl`, `scaler_v2.pkl`, `feature_names_v2.pkl`, `model_meta_v2.json`.
+- **Riesgo:** runtime carga artefactos viejos.
+- **Síntoma:** predicción estable pero incoherente con señales v2.
+
+#### 4) Gates/Pattern
+
+- **Input esperado:** estados de compuerta + features coherentes con etapa canary.
+- **Output esperado:** autorización/rechazo explicable.
+- **Riesgo:** gate legacy bloquea y “parece” culpa de v2.
+- **Síntoma:** muchas NO-GO sin deterioro claro de probabilidad.
+
+#### 5) HUD/Diagnóstico
+
+- **Input esperado:** una sola verdad operativa por tick.
+- **Output esperado:** mensajes sin contradicción entre “ready” y bloqueo.
+- **Riesgo:** paneles mezclan estados de fases distintas.
+- **Síntoma:** “SEÑAL LISTA” junto a bloqueos duros en el mismo tick.
+
+### Criterio de salida del canary v2
+
+Promover solo si se cumplen en ventana estable:
+
+- calibración aceptable (ECE/Brier + buckets),
+- precisión objetivo sin degradar drawdown,
+- estabilidad operativa (sin contradicciones recurrentes HUD/gates),
+- trazabilidad limpia de artefactos y esquema.
+
+Si falla cualquiera, rollback controlado a v1.
