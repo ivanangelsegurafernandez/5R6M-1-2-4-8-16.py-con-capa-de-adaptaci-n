@@ -11552,9 +11552,21 @@ def evaluar_semaforo():
         falta = costo_c1 - saldo_val
         detalle = f"Saldo < C1 ({costo_c1:.2f}). Faltan {falta:.2f} USD para abrir nueva orden."
         return "🟡", "AVISO", detalle
+
+    # Alineación HUD vs compuerta REAL: no marcar SEÑAL LISTA si gate está en espera.
+    confirm_st = int(DYN_ROOF_STATE.get("confirm_streak", 0) or 0)
+    confirm_need = int(DYN_ROOF_STATE.get("last_confirm_need", DYN_ROOF_CONFIRM_TICKS) or DYN_ROOF_CONFIRM_TICKS)
+    trigger_ok = bool(DYN_ROOF_STATE.get("last_trigger_ok", False))
+    if confirm_st < confirm_need:
+        detalle = f"Compuerta en espera: confirm={confirm_st}/{confirm_need}."
+        return "🟡", "AVISO", detalle
+    if not trigger_ok:
+        detalle = "Compuerta en espera: trigger_ok=no."
+        return "🟡", "AVISO", detalle
+
     if saldo_val < costo:
         detalle = f"Saldo parcial: cubre C1 pero no todo C1..C{int(MAX_CICLOS)} ({costo:.2f})."
-        return "🟢", "SEÑAL LISTA", detalle
+        return "🟡", "AVISO", detalle
 
     n_inc = contar_filas_incremental()
     if n_inc < MIN_FIT_ROWS_LOW:
