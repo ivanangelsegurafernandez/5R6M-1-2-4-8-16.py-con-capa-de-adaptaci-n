@@ -327,3 +327,85 @@ Consolidar una sola verdad operativa por `epoch_id` para que todos los paneles m
 ### Fase 3 — Calibración y tuning fino
 
 Recién después: ajuste de `roof_dynamic`, selección de calibrador por ECE/Brier y política de probabilidades altas con control de sobreconfianza.
+
+---
+
+## Mapa real de variables (pipeline actual) y propuesta CORE13 minuto-a-minuto
+
+### 1) ¿Dónde nacen hoy las variables?
+
+**Etapa A — Bots fuente (fulll45..fulll50):**
+Cada bot calcula indicadores y persiste una fila enriquecida por trade en `registro_enriquecido_<bot>.csv` con su `CSV_HEADER`. Ahí se originan señales como `rsi_9`, `rsi_14`, `sma_5`, `cruce_sma`, `breakout`, `rsi_reversion`, `racha_actual`, etc.  
+
+**Etapa B — Maestro 5R6M (contrato canónico):**
+El maestro define el contrato de features en `FEATURE_NAMES_CORE_13` y lo replica en `INCREMENTAL_FEATURES_V2`, que gobierna validación/escritura/lectura del incremental y entrenamiento.  
+
+**Etapa C — Consolidación:**
+`dataset_incremental.csv` es el histórico central tabular para IA, con columnas `features + result_bin`; se usa para construir `X/y` y entrenar/calibrar el campeón.
+
+### 2) ¿Qué es exactamente `dataset_incremental.csv`?
+
+- Es el dataset operativo de entrenamiento del oráculo (no un log visual de HUD).
+- Cada fila representa una observación cerrada con etiqueta `result_bin`.
+- Esquema canónico: `INCREMENTAL_FEATURES_V2 + result_bin`.
+- No multiplica columnas por bot; con más bots crece el número de filas, no el ancho del esquema.
+
+### 3) ¿Qué variables se aprovechan hoy (campeón) y cuáles no?
+
+Según `model_meta.json` actual, el campeón está usando **3** features:
+
+- `racha_actual`
+- `puntaje_estrategia`
+- `payout`
+
+No usadas por el campeón actual (del core de 13):
+
+- `rsi_9`, `rsi_14`, `sma_5`, `sma_spread`, `cruce_sma`, `breakout`, `rsi_reversion`, `volatilidad`, `es_rebote`, `hora_bucket`.
+
+Además, hay una señal de calidad importante:
+
+- `sma_spread` figura como **ROTA** (dominancia 1.0, `nunique=1`) y aparece en `dropped_features`.
+
+### 4) ¿Dónde se hacen los cambios (archivos/bloques)?
+
+1. **Bots fuente** (`botttt45..50-1-2-4-8-16-32.py`):
+   - Cálculo en vivo de nuevas variables.
+   - Escritura consistente en `CSV_HEADER` / snapshot por trade.
+
+2. **Maestro 5R6M** (`5R6M-1-2-4-8-16.py`):
+   - Contrato: `FEATURE_NAMES_CORE_13`, `INCREMENTAL_FEATURES_V2`.
+   - Reparación/validación del incremental (`_canonical_incremental_cols`, `validar_fila_incremental`, `_anexar_incremental_desde_bot_CANON`).
+
+3. **Artefactos de modelo**:
+   - Reentreno y guardado atómico de `modelo_xgb.pkl`, `scaler.pkl`, `feature_names.pkl`, `model_meta.json`.
+
+### 5) Propuesta CORE13 v2 (1-minuto friendly)
+
+Mantener las 3 que hoy sí usa el campeón:
+
+1. `racha_actual`
+2. `puntaje_estrategia`
+3. `payout`
+
+Sustituir las no usadas/menos útiles por 10 features micro-horizonte:
+
+4. `ret_1m`
+5. `ret_3m`
+6. `ret_5m`
+7. `slope_5m`
+8. `rv_20`
+9. `range_norm`
+10. `bb_z`
+11. `body_ratio`
+12. `wick_imbalance`
+13. `micro_trend_persist`
+
+> Nota: en esta corrida el campeón colapsó a 3 features; por eso la propuesta parte de 3 + 10 micro. Si en próximos campeones reaparecen features robustas (p.ej. `breakout`/`es_rebote`), se puede recombinar a 6 + 7.
+
+### 6) Plan de migración sin romper producción
+
+1. **Shadow logging** de las 10 nuevas en bots (sin cambiar aún el contrato core).
+2. **Auditoría de salud** (nunique, dominancia, faltantes, estabilidad por ventana temporal).
+3. **Cambio de contrato** en maestro (`CORE13`/`INCREMENTAL_FEATURES_V2`) en versiónada (`CORE13_v2`).
+4. **Incremental limpio v2** + reentreno + canary controlado.
+5. **Promoción** solo si mejora calibración/precisión sin empeorar drawdown.
