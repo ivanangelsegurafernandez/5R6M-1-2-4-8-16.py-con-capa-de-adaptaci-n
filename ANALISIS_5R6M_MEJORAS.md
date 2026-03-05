@@ -352,19 +352,24 @@ El maestro define el contrato de features en `FEATURE_NAMES_CORE_13` y lo replic
 
 ### 3) ¿Qué variables se aprovechan hoy (campeón) y cuáles no?
 
-Según `model_meta.json` actual, el campeón está usando **3** features:
+**Estado real debe leerse siempre desde `model_meta.json` vigente (campo `feature_names`).**
+
+En este snapshot local del repositorio, el campeón usa **3** features:
 
 - `racha_actual`
 - `puntaje_estrategia`
 - `payout`
 
-No usadas por el campeón actual (del core de 13):
+No usadas por el campeón de este snapshot (del core de 13):
 
 - `rsi_9`, `rsi_14`, `sma_5`, `sma_spread`, `cruce_sma`, `breakout`, `rsi_reversion`, `volatilidad`, `es_rebote`, `hora_bucket`.
 
+> Nota de gobernanza: en otras corridas/sesiones puede aparecer un campeón con otro set (por ejemplo 6 features). Por eso, el documento debe distinguir entre **estado actual observado** y **propuesta objetivo**, sin mezclarlos.
+
 Además, hay una señal de calidad importante:
 
-- `sma_spread` figura como **ROTA** (dominancia 1.0, `nunique=1`) y aparece en `dropped_features`.
+- `sma_spread` figura como **ROTA** (dominancia 1.0, `nunique=1`) y aparece en `dropped_features` del meta vigente.
+- Si el incremental más reciente muestra variación en `sma_spread`, tratarlo como alerta de consistencia (posible desalineación temporal entre incremental y ventana efectiva de entrenamiento del campeón).
 
 ### 4) ¿Dónde se hacen los cambios (archivos/bloques)?
 
@@ -402,10 +407,49 @@ Sustituir las no usadas/menos útiles por 10 features micro-horizonte:
 
 > Nota: en esta corrida el campeón colapsó a 3 features; por eso la propuesta parte de 3 + 10 micro. Si en próximos campeones reaparecen features robustas (p.ej. `breakout`/`es_rebote`), se puede recombinar a 6 + 7.
 
+### 5.1) Estado actual vs propuesta (para evitar confusiones)
+
+- **Estado actual observado (meta vigente):** usar `feature_names` de `model_meta.json` como fuente de verdad.
+- **Propuesta objetivo (CORE13_v2):** diseño recomendado para siguiente iteración, no descripción del campeón actual.
+- Cualquier PR de variables debe declarar explícitamente ambos bloques para no mezclar diagnóstico con intención de diseño.
+
 ### 6) Plan de migración sin romper producción
 
 1. **Shadow logging** de las 10 nuevas en bots (sin cambiar aún el contrato core).
 2. **Auditoría de salud** (nunique, dominancia, faltantes, estabilidad por ventana temporal).
-3. **Cambio de contrato** en maestro (`CORE13`/`INCREMENTAL_FEATURES_V2`) en versiónada (`CORE13_v2`).
+3. **Cambio de contrato** en maestro (`CORE13`/`INCREMENTAL_FEATURES_V2`) versionado (`CORE13_v2`) solo después de validar estado actual vs propuesta.
 4. **Incremental limpio v2** + reentreno + canary controlado.
 5. **Promoción** solo si mejora calibración/precisión sin empeorar drawdown.
+
+### 7) Respuesta directa (estado de implementación)
+
+Actualización de estado:
+
+- **Sí se ejecutó la migración del contrato de features CORE13 en el maestro** (`FEATURE_NAMES_CORE_13` / `INCREMENTAL_FEATURES_V2`) hacia el set scalping propuesto.
+- Se mantuvo compatibilidad con datos legacy mediante backfill/derivación de las nuevas features desde columnas históricas cuando faltan.
+- La lógica operativa/HUD/martingala previa se conserva; el cambio de este paso fue específicamente de contrato/ingeniería de variables.
+
+### 8) Qué se mantiene igual y qué se reemplaza (enfoque scalping)
+
+Regla: **mantener lo que hoy aporta en el campeón** y reemplazar solo lo no usado/no robusto.
+
+#### Se mantiene (estado actual observado en este snapshot)
+
+1. `racha_actual`
+2. `puntaje_estrategia`
+3. `payout`
+
+#### Se reemplaza (candidatas del core actual con bajo/no uso en campeón)
+
+4. `rsi_9`              -> `ret_1m`
+5. `rsi_14`             -> `ret_3m`
+6. `sma_5`              -> `ret_5m`
+7. `sma_spread`         -> `slope_5m`
+8. `cruce_sma`          -> `rv_20`
+9. `breakout`           -> `range_norm`
+10. `rsi_reversion`     -> `bb_z`
+11. `volatilidad`       -> `body_ratio`
+12. `es_rebote`         -> `wick_imbalance`
+13. `hora_bucket`       -> `micro_trend_persist`
+
+> Nota operativa: este mapeo es la propuesta para scalping 1-min. Antes de activarlo en producción, se recomienda fase shadow + auditoría de salud + canary.

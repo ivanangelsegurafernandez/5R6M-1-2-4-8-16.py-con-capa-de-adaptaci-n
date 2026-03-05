@@ -802,9 +802,10 @@ MIN_CALIB_ROWS = 80
 # Feature set CORE (13) — estable y sin mutaciones
 # ============================================================
 FEATURE_NAMES_CORE_13 = [
-    "rsi_9","rsi_14","sma_5","sma_spread","cruce_sma","breakout",
-    "rsi_reversion","racha_actual","payout","puntaje_estrategia",
-    "volatilidad","es_rebote","hora_bucket",
+    # CORE13_v2 (scalping 1-min): mantener aportantes + reemplazo de no-aportantes.
+    "racha_actual", "puntaje_estrategia", "payout",
+    "ret_1m", "ret_3m", "ret_5m", "slope_5m", "rv_20",
+    "range_norm", "bb_z", "body_ratio", "wick_imbalance", "micro_trend_persist",
 ]
 
 # Por defecto entrenamos SOLO con las 13 core (modo estable)
@@ -1292,9 +1293,9 @@ try:
     INCREMENTAL_FEATURES_V2 = list(FEATURE_NAMES_CORE_13)
 except Exception:
     INCREMENTAL_FEATURES_V2 = [
-        "rsi_9","rsi_14","sma_5","sma_spread","cruce_sma","breakout",
-        "rsi_reversion","racha_actual","payout","puntaje_estrategia",
-        "volatilidad","es_rebote","hora_bucket",
+        "racha_actual", "puntaje_estrategia", "payout",
+        "ret_1m", "ret_3m", "ret_5m", "slope_5m", "rv_20",
+        "range_norm", "bb_z", "body_ratio", "wick_imbalance", "micro_trend_persist",
     ]
 # === LOCK ESTRICTO (solo para escrituras sensibles como incremental.csv) ===
 @contextmanager
@@ -1724,6 +1725,9 @@ def _anexar_incremental_desde_bot_CANON(bot: str, fila_dict_or_full: dict, label
 
         if not isinstance(fila_dict_or_full, dict) or not fila_dict_or_full:
             return False
+
+        # Normalizar/enriquecer fila para contrato CORE13_v2 (con fallback legacy).
+        fila_dict_or_full = _enriquecer_scalping_features_row(fila_dict_or_full)
 
         # Label: aceptar parámetro o leer del dict
         if label is None:
@@ -2771,6 +2775,17 @@ def clip_feature_values(fila_dict, feature_names):
         "volatilidad": (0, 1),
         "es_rebote": (0, 1),
         "hora_bucket": (0, 1),
+        # CORE13_v2 scalping
+        "ret_1m": (-1, 1),
+        "ret_3m": (-1, 1),
+        "ret_5m": (-1, 1),
+        "slope_5m": (-1, 1),
+        "rv_20": (0, 1),
+        "range_norm": (0, 1),
+        "bb_z": (-3, 3),
+        "body_ratio": (0, 1),
+        "wick_imbalance": (-1, 1),
+        "micro_trend_persist": (-1, 1),
         # sma_5 / sma_20: no clip, pero sí normalizar a float cuando se pueda
     }
     clipped = dict(fila_dict)
@@ -2800,6 +2815,52 @@ def clip_feature_values(fila_dict, feature_names):
 
     return clipped
     
+def _enriquecer_scalping_features_row(fila_dict: dict) -> dict:
+    """Completa CORE13_v2 scalping desde campos legacy cuando falten."""
+    out = dict(fila_dict or {})
+
+    def _f(name, default=0.0):
+        try:
+            v = float(out.get(name, default) if out.get(name, default) not in (None, "") else default)
+            return v if math.isfinite(v) else float(default)
+        except Exception:
+            return float(default)
+
+    # Legacy proxies (si no vienen directos de bot):
+    rsi9 = _f("rsi_9", 50.0)
+    rsi14 = _f("rsi_14", 50.0)
+    sma_spread = _f("sma_spread", 0.0)
+    cruce_sma = _f("cruce_sma", 0.0)
+    breakout = _f("breakout", 0.0)
+    rsi_rev = _f("rsi_reversion", 0.0)
+    vol = _f("volatilidad", 0.0)
+    reb = _f("es_rebote", 0.0)
+    racha = _f("racha_actual", 0.0)
+
+    if "ret_1m" not in out:
+        out["ret_1m"] = float(np.clip((rsi9 - 50.0) / 50.0, -1.0, 1.0))
+    if "ret_3m" not in out:
+        out["ret_3m"] = float(np.clip((rsi14 - 50.0) / 50.0, -1.0, 1.0))
+    if "ret_5m" not in out:
+        out["ret_5m"] = float(np.clip(0.6 * float(out.get("ret_3m", 0.0)) + 0.4 * float(out.get("ret_1m", 0.0)), -1.0, 1.0))
+    if "slope_5m" not in out:
+        out["slope_5m"] = float(np.clip(sma_spread + 0.05 * cruce_sma, -1.0, 1.0))
+    if "rv_20" not in out:
+        out["rv_20"] = float(np.clip(vol, 0.0, 1.0))
+    if "range_norm" not in out:
+        out["range_norm"] = float(np.clip(breakout, 0.0, 1.0))
+    if "bb_z" not in out:
+        out["bb_z"] = float(np.clip((2.0 * rsi_rev) - 1.0, -3.0, 3.0))
+    if "body_ratio" not in out:
+        out["body_ratio"] = float(np.clip(abs(float(out.get("ret_1m", 0.0))), 0.0, 1.0))
+    if "wick_imbalance" not in out:
+        out["wick_imbalance"] = float(np.clip((2.0 * reb) - 1.0, -1.0, 1.0))
+    if "micro_trend_persist" not in out:
+        out["micro_trend_persist"] = float(np.clip(racha / 10.0, -1.0, 1.0))
+
+    return out
+
+
 def calcular_volatilidad_simple(row_dict: dict) -> float:
     """
     Proxy de volatilidad 0–1 menos saturante que el clip lineal.
@@ -7648,6 +7709,28 @@ def _enriquecer_df_con_derivadas(df: pd.DataFrame, feats: list[str]) -> pd.DataF
             base = sma20.abs().clip(lower=1e-9)
             out["sma_spread"] = ((sma5 - sma20).abs() / base).clip(lower=0.0, upper=5.0)
 
+        # CORE13_v2 scalping (backfill desde columnas legacy si existen)
+        if "ret_1m" in feats:
+            out["ret_1m"] = ((_col_num("rsi_9", 50.0) - 50.0) / 50.0).clip(lower=-1.0, upper=1.0)
+        if "ret_3m" in feats:
+            out["ret_3m"] = ((_col_num("rsi_14", 50.0) - 50.0) / 50.0).clip(lower=-1.0, upper=1.0)
+        if "ret_5m" in feats:
+            out["ret_5m"] = (0.6 * _col_num("ret_3m", 0.0) + 0.4 * _col_num("ret_1m", 0.0)).clip(lower=-1.0, upper=1.0)
+        if "slope_5m" in feats:
+            out["slope_5m"] = (_col_num("sma_spread", 0.0) + 0.05 * _col_num("cruce_sma", 0.0)).clip(lower=-1.0, upper=1.0)
+        if "rv_20" in feats:
+            out["rv_20"] = _col_num("volatilidad", 0.0).clip(lower=0.0, upper=1.0)
+        if "range_norm" in feats:
+            out["range_norm"] = _col_num("breakout", 0.0).clip(lower=0.0, upper=1.0)
+        if "bb_z" in feats:
+            out["bb_z"] = ((2.0 * _col_num("rsi_reversion", 0.0)) - 1.0).clip(lower=-3.0, upper=3.0)
+        if "body_ratio" in feats:
+            out["body_ratio"] = _col_num("ret_1m", 0.0).abs().clip(lower=0.0, upper=1.0)
+        if "wick_imbalance" in feats:
+            out["wick_imbalance"] = ((2.0 * _col_num("es_rebote", 0.0)) - 1.0).clip(lower=-1.0, upper=1.0)
+        if "micro_trend_persist" in feats:
+            out["micro_trend_persist"] = (_col_num("racha_actual", 0.0) / 10.0).clip(lower=-1.0, upper=1.0)
+
         return out
     except Exception:
         return df
@@ -8176,6 +8259,9 @@ def oraculo_predict(fila_dict, modelo, scaler, meta, bot_name=""):
             fila_dict["hora_bucket"] = 0.0
             fila_dict["hora_missing"] = 1.0
 
+        # Enriquecer features CORE13_v2 si faltan (compat con filas legacy).
+        fila_dict = _enriquecer_scalping_features_row(fila_dict)
+
         # Armar X en orden del modelo
         X = []
         for col in feature_names:
@@ -8651,6 +8737,7 @@ def anexar_incremental_desde_bot(bot: str):
         # Construir row completo + features derivadas (volatilidad/hora_bucket)
         row_dict_full = dict(fila_dict)
         row_dict_full["result_bin"] = label
+        row_dict_full = _enriquecer_scalping_features_row(row_dict_full)
 
         # 1) Volatilidad: prioriza valor ya enriquecido; recalcula solo si falta/inválido.
         vol_calc = None
