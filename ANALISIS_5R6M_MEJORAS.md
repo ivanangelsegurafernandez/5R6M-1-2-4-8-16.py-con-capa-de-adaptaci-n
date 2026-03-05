@@ -410,14 +410,14 @@ Sustituir las no usadas/menos útiles por 10 features micro-horizonte:
 ### 5.1) Estado actual vs propuesta (para evitar confusiones)
 
 - **Estado actual observado (meta vigente):** usar `feature_names` de `model_meta.json` como fuente de verdad.
-- **Propuesta objetivo (CORE13_v2):** diseño recomendado para siguiente iteración, no descripción del campeón actual.
+- **CORE13_v2 aplicado:** contrato ya migrado en maestro; seguir validando desempeño vs campeón previo.
 - Cualquier PR de variables debe declarar explícitamente ambos bloques para no mezclar diagnóstico con intención de diseño.
 
 ### 6) Plan de migración sin romper producción
 
 1. **Shadow logging** de las 10 nuevas en bots (sin cambiar aún el contrato core).
 2. **Auditoría de salud** (nunique, dominancia, faltantes, estabilidad por ventana temporal).
-3. **Cambio de contrato** en maestro (`CORE13`/`INCREMENTAL_FEATURES_V2`) versionado (`CORE13_v2`) solo después de validar estado actual vs propuesta.
+3. **Contrato v2 activo:** auditar estabilidad de `CORE13_v2` (calibración, drawdown, salud de features) y preparar rollback a v1 si degrada.
 4. **Incremental limpio v2** + reentreno + canary controlado.
 5. **Promoción** solo si mejora calibración/precisión sin empeorar drawdown.
 
@@ -452,4 +452,4 @@ Regla: **mantener lo que hoy aporta en el campeón** y reemplazar solo lo no usa
 12. `es_rebote`         -> `wick_imbalance`
 13. `hora_bucket`       -> `micro_trend_persist`
 
-> Nota operativa: este mapeo es la propuesta para scalping 1-min. Antes de activarlo en producción, se recomienda fase shadow + auditoría de salud + canary.
+> Nota operativa: mapeo ya aplicado en maestro; mantener shadow/auditoría/canary para validar que v2 supere o iguale a v1.

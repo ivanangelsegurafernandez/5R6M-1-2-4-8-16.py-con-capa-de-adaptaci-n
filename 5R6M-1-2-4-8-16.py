@@ -402,7 +402,7 @@ PATTERN_V1_Q2_PROXY = {
 PATTERN_V1_LAST_LOG_TS = {}
 # Fase operativa REAL por madurez: SHADOW -> MICRO -> NORMAL
 REAL_PILOT_MODE_ENABLE = True
-REAL_MICRO_REQUIRE_PATTERN = True
+REAL_MICRO_REQUIRE_PATTERN = False
 REAL_MICRO_PATTERN_MIN_TOTAL = 4.0
 REAL_MICRO_REQUIRE_DUAL = False
 REAL_MICRO_REQUIRE_STRUCTURE = True
@@ -817,10 +817,11 @@ FEATURE_NAMES_INTERACCIONES = [
 # Gobernanza calidad>cantidad: entrenar solo con features que realmente aporten.
 FEATURE_ALWAYS_KEEP = ["racha_actual"]
 FEATURE_MAX_PROD = 4
-FEATURE_SET_PROD_WARMUP = ["racha_actual", "payout", "breakout", "rsi_14", "es_rebote", "puntaje_estrategia"]
+FEATURE_SET_PROD_WARMUP = ["racha_actual", "payout", "ret_3m", "range_norm", "rv_20", "puntaje_estrategia"]
 FEATURE_SET_CORE_EXT = [
-    "racha_actual", "payout", "rsi_14", "breakout",
-    "rsi_9", "cruce_sma", "rsi_reversion", "es_rebote",
+    "racha_actual", "payout", "ret_1m", "ret_3m",
+    "ret_5m", "slope_5m", "range_norm", "bb_z",
+    "rv_20", "body_ratio", "wick_imbalance", "micro_trend_persist",
 ]
 FEATURE_SET_CORE_EXT_MIN_ROWS = 500
 FEATURE_MIN_AUC_DELTA = 0.015      # aporte mínimo (|AUC_uni - 0.5|)
@@ -1467,24 +1468,21 @@ def reparar_dataset_incremental_mutante(ruta: str = "dataset_incremental.csv", c
                         except Exception:
                             new_row = None
 
-                    # 2) Rescate por posición si el header es inútil
+                    # 2) Si el header no es canónico, intentar conversión por nombre (legacy->v2)
+                    if new_row is None and header_list and len(header_list) == len(row):
+                        try:
+                            row_map = {str(header_list[i]).strip(): row[i] for i in range(len(row))}
+                            row_map = _enriquecer_scalping_features_row(row_map)
+                            lb = row_map.get("result_bin", row_map.get("label", row_map.get("y", None)))
+                            new_row = [row_map.get(c, "") for c in cols[:-1]] + [lb]
+                        except Exception:
+                            new_row = None
+
+                    # 3) Rescate por posición (último recurso legacy; evitar para v2 salvo emergencia)
                     if new_row is None:
                         ncols = len(cols)
                         rlen = len(row)
-
-                        # Casos exactos: (13 feats + extras + label)
-                        # Usamos SIEMPRE row[-1] como label (más seguro) y tomamos las 13 primeras como feats.
-                        if ncols == 14 and rlen == 16:
-                            # 13 feats + bot_id + activo_id + label
-                            new_row = [row[i] for i in range(13)] + [row[-1]]
-                        elif ncols == 14 and rlen == 15:
-                            # 13 feats + (1 extra) + label
-                            new_row = [row[i] for i in range(13)] + [row[-1]]
-                        elif ncols == 14 and rlen == 14:
-                            # 13 feats + label
-                            new_row = [row[i] for i in range(13)] + [row[-1]]
-                        elif rlen >= ncols:
-                            # Caso general: toma primeras features y el último como label
+                        if rlen >= ncols:
                             new_row = list(row[:ncols - 1]) + [row[-1]]
                         else:
                             continue
@@ -1693,19 +1691,20 @@ def validar_fila_incremental(fila_dict, feature_names):
             return False, f"{k}=no numérico"
         fila_dict[k] = v  # normaliza en sitio
 
-    # Rangos lógicos básicos
-    if not (0 <= fila_dict.get("rsi_9", 50) <= 100):
-        return False, "RSI_9 fuera de 0-100"
-    if not (0 <= fila_dict.get("rsi_14", 50) <= 100):
-        return False, "RSI_14 fuera de 0-100"
-    if not (0 <= fila_dict.get("payout", 0.0) <= 1.5):
-        return False, "Payout fuera de 0-1.5"
-    if "volatilidad" in fila_dict and not (0 <= fila_dict["volatilidad"] <= 1):
-        return False, "Volatilidad fuera de 0-1"
-    if "es_rebote" in fila_dict and not (0 <= fila_dict["es_rebote"] <= 1):
-        return False, "es_rebote fuera de 0-1"
-    if "hora_bucket" in fila_dict and not (0 <= fila_dict["hora_bucket"] <= 1):
-        return False, "hora_bucket fuera de 0-1"
+    # Rangos lógicos por contrato activo (v2 + compat legacy opcional)
+    ranges = {
+        "rsi_9": (0, 100), "rsi_14": (0, 100),
+        "payout": (0, 1.5), "volatilidad": (0, 1), "es_rebote": (0, 1), "hora_bucket": (0, 1),
+        "ret_1m": (-1, 1), "ret_3m": (-1, 1), "ret_5m": (-1, 1),
+        "slope_5m": (-1, 1), "rv_20": (0, 1), "range_norm": (0, 1),
+        "bb_z": (-3, 3), "body_ratio": (0, 1), "wick_imbalance": (-1, 1), "micro_trend_persist": (-1, 1),
+    }
+    for k in feature_names:
+        if k in ranges:
+            lo, hi = ranges[k]
+            v = float(fila_dict.get(k, 0.0) or 0.0)
+            if not (lo <= v <= hi):
+                return False, f"{k} fuera de rango [{lo},{hi}]"
 
     return True, ""
         
@@ -9203,7 +9202,7 @@ def _diagnosticar_inputs_duplicados(rows_by_bot: dict, dup_bots: list[str], feat
         else:
             diff_cols.append(c)
 
-    expected_pref = ["payout", "rsi_9", "rsi_14", "sma_5", "sma_spread", "volatilidad", "hora_bucket"]
+    expected_pref = ["payout", "ret_1m", "ret_3m", "ret_5m", "range_norm", "rv_20", "micro_trend_persist"]
     expected_diff = [c for c in expected_pref if c in base_feats]
     source_info = {}
     for b in dup_bots:
@@ -11794,11 +11793,7 @@ def backfill_incremental(ultimas=500):
             feature_names = joblib.load("feature_names.pkl")
             feature_names = [c for c in feature_names if c != "result_bin"]
         except Exception:
-            feature_names = [
-                "rsi_9","rsi_14","sma_5","sma_spread","cruce_sma","breakout",
-                "rsi_reversion","racha_actual","payout","puntaje_estrategia",
-                "volatilidad","es_rebote","hora_bucket",
-            ]
+            feature_names = list(INCREMENTAL_FEATURES_V2)
         inc = "dataset_incremental.csv"
         cols = feature_names + ["result_bin"]
 
