@@ -1488,21 +1488,19 @@ def reparar_dataset_incremental_mutante(ruta: str = "dataset_incremental.csv", c
                             continue
 
 
-                    # Validación y casteo (features float, label int 0/1)
-                    feats = []
-                    ok = True
-                    for x in new_row[:-1]:
-                        v = _safe_float(x)
-                        if v is None:
-                            ok = False
-                            break
-                        feats.append(v)
-
-                    lab = _safe_int01(new_row[-1])
-                    if not ok or lab is None:
+                    # Validación y saneo defensivo (clip + contrato activo)
+                    try:
+                        row_map_clean = {cols[i]: new_row[i] for i in range(len(cols))}
+                        row_map_clean = clip_feature_values(row_map_clean, cols[:-1])
+                        ok_row, _reason = validar_fila_incremental(row_map_clean, cols[:-1])
+                        if not ok_row:
+                            continue
+                        lab = _safe_int01(row_map_clean.get("result_bin", new_row[-1]))
+                        if lab is None:
+                            continue
+                        cleaned_rows.append([float(row_map_clean[c]) for c in cols[:-1]] + [lab])
+                    except Exception:
                         continue
-
-                    cleaned_rows.append(feats + [lab])
             break
         except Exception:
             continue
@@ -2818,6 +2816,18 @@ def _enriquecer_scalping_features_row(fila_dict: dict) -> dict:
     """Completa CORE13_v2 scalping desde campos legacy cuando falten."""
     out = dict(fila_dict or {})
 
+    def _missing(name: str) -> bool:
+        v = out.get(name, None)
+        if v is None:
+            return True
+        if isinstance(v, str) and v.strip() == "":
+            return True
+        try:
+            vf = float(v)
+            return not math.isfinite(vf)
+        except Exception:
+            return True
+
     def _f(name, default=0.0):
         try:
             v = float(out.get(name, default) if out.get(name, default) not in (None, "") else default)
@@ -2836,25 +2846,25 @@ def _enriquecer_scalping_features_row(fila_dict: dict) -> dict:
     reb = _f("es_rebote", 0.0)
     racha = _f("racha_actual", 0.0)
 
-    if "ret_1m" not in out:
+    if _missing("ret_1m"):
         out["ret_1m"] = float(np.clip((rsi9 - 50.0) / 50.0, -1.0, 1.0))
-    if "ret_3m" not in out:
+    if _missing("ret_3m"):
         out["ret_3m"] = float(np.clip((rsi14 - 50.0) / 50.0, -1.0, 1.0))
-    if "ret_5m" not in out:
+    if _missing("ret_5m"):
         out["ret_5m"] = float(np.clip(0.6 * float(out.get("ret_3m", 0.0)) + 0.4 * float(out.get("ret_1m", 0.0)), -1.0, 1.0))
-    if "slope_5m" not in out:
+    if _missing("slope_5m"):
         out["slope_5m"] = float(np.clip(sma_spread + 0.05 * cruce_sma, -1.0, 1.0))
-    if "rv_20" not in out:
+    if _missing("rv_20"):
         out["rv_20"] = float(np.clip(vol, 0.0, 1.0))
-    if "range_norm" not in out:
+    if _missing("range_norm"):
         out["range_norm"] = float(np.clip(breakout, 0.0, 1.0))
-    if "bb_z" not in out:
+    if _missing("bb_z"):
         out["bb_z"] = float(np.clip((2.0 * rsi_rev) - 1.0, -3.0, 3.0))
-    if "body_ratio" not in out:
+    if _missing("body_ratio"):
         out["body_ratio"] = float(np.clip(abs(float(out.get("ret_1m", 0.0))), 0.0, 1.0))
-    if "wick_imbalance" not in out:
+    if _missing("wick_imbalance"):
         out["wick_imbalance"] = float(np.clip((2.0 * reb) - 1.0, -1.0, 1.0))
-    if "micro_trend_persist" not in out:
+    if _missing("micro_trend_persist"):
         out["micro_trend_persist"] = float(np.clip(racha / 10.0, -1.0, 1.0))
 
     return out
@@ -8421,10 +8431,10 @@ def _json_dump_atomic(data: dict, path: str):
 def guardar_oracle_assets_atomico(modelo, scaler, feature_names, meta: dict | None):
     """
     Escribe de forma atómica:
-      - modelo_xgb.pkl   (_MODEL_PATH)
-      - scaler.pkl       (_SCALER_PATH)
-      - feature_names.pkl(_FEATURES_PATH)
-      - model_meta.json  (_META_PATH)
+      - artefacto de modelo   (_MODEL_PATH)
+      - artefacto de scaler   (_SCALER_PATH)
+      - artefacto de features (_FEATURES_PATH)
+      - meta activa           (_META_PATH)
     """
     def _ensure_parent(path: str):
         try:
@@ -9350,7 +9360,7 @@ def maybe_retrain(force: bool = False):
     - StandardScaler FIT SOLO en TRAIN_BASE
     - Calibración SIN reentrenar base (sigmoid/isotonic) usando ModeloXGBCalibrado
     - TimeSeriesSplit sobre TRAIN_BASE para CV AUC (diagnóstico, no toca el split final)
-    - Guardado atómico: modelo_xgb.pkl, scaler.pkl, feature_names.pkl, model_meta.json
+    - Guardado atómico en los paths activos (_MODEL_PATH/_SCALER_PATH/_FEATURES_PATH/_META_PATH)
     """
     global last_retrain_count, last_retrain_ts, _ORACLE_CACHE, LAST_RETRAIN_ERROR
 
