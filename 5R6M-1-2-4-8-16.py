@@ -1448,6 +1448,7 @@ def reparar_dataset_incremental_mutante(ruta: str = "dataset_incremental.csv", c
 
     # Armar filas limpias
     cleaned_rows = []
+    seen_rows = set()
     header_index = {name: i for i, name in enumerate(header_list)} if header_has_canonical else {}
 
     for enc in ("utf-8", "latin-1", "windows-1252"):
@@ -1498,7 +1499,13 @@ def reparar_dataset_incremental_mutante(ruta: str = "dataset_incremental.csv", c
                         lab = _safe_int01(row_map_clean.get("result_bin", new_row[-1]))
                         if lab is None:
                             continue
-                        cleaned_rows.append([float(row_map_clean[c]) for c in cols[:-1]] + [lab])
+                        row_clean = [float(row_map_clean[c]) for c in cols[:-1]] + [lab]
+                        # Deduplicar durante repair para no inflar entrenamiento por filas repetidas.
+                        sig = tuple(round(float(v), 10) for v in row_clean[:-1]) + (int(row_clean[-1]),)
+                        if sig in seen_rows:
+                            continue
+                        seen_rows.add(sig)
+                        cleaned_rows.append(row_clean)
                     except Exception:
                         continue
             break
